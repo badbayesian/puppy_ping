@@ -13,6 +13,12 @@ if TYPE_CHECKING:
 
 
 def send_email(profiles: list["DogProfile"], send: bool = True) -> None:
+    """Render and optionally send a summary email for dog profiles.
+
+    Args:
+        profiles: Profiles to include in the email.
+        send: When True, send via SMTP; otherwise print the message.
+    """
     ts = datetime.now().strftime("%Y-%m-%d %H")
     msg = EmailMessage()
     msg["From"] = os.environ["EMAIL_FROM"]
@@ -25,6 +31,14 @@ def send_email(profiles: list["DogProfile"], send: bool = True) -> None:
 
     # -------- html version --------
     def fmt(v):
+        """Format optional values for display.
+
+        Args:
+            v: Value to format.
+
+        Returns:
+            Formatted string for HTML display.
+        """
         return "--" if v is None else str(v)
 
     order = ["children", "dogs", "cats", "home_alone", "activity", "environment"]

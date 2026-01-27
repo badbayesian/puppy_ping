@@ -12,6 +12,11 @@ class DogMedia:
     embeds: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
+        """Return a compact summary of media counts.
+
+        Returns:
+            Human-readable summary string.
+        """
         return f"{len(self.images)} images, {len(self.videos)} videos, {len(self.embeds)} embeds"
 
 
@@ -37,6 +42,11 @@ class DogProfile:
     scraped_at_utc: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def __str__(self) -> str:
+        """Return a human-readable profile summary.
+
+        Returns:
+            Formatted profile string.
+        """
         def fmt(v):
             return v if v is not None else "--"
 
