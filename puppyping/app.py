@@ -36,7 +36,7 @@ load_dotenv()
 PAWS_AVAILABLE_URL = "https://www.pawschicago.org/our-work/pets-adoption/pets-available"
 DOG_PROFILE_PATH_RE = re.compile(r"^/pet-available-for-adoption/showdog/\d+$")
 CANTO_IMAGE_PREFIX = "https://pawschicago.canto.com/direct/image/"
-CACHE_TIME = 6 * 60 * 60  # 4 hours
+CACHE_TIME = 24 * 60 * 60  # 24 hours
 
 
 # ===========================
