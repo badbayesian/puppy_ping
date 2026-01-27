@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 .cache/
 .env
+.ipynb_checkpoints/
+puppyping.egg-info/
