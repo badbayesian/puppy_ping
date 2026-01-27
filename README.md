@@ -18,6 +18,12 @@ Clear the on-disk cache before running:
 .\.venv\Scripts\python -m puppyping --clear-cache
 ```
 
+## Structure
+
+- `puppyping/app.py` — scraping, parsing, caching, and CLI entrypoint.
+- `puppyping/models.py` — dataclasses for `DogProfile` and `DogMedia`.
+- `puppyping/emailer.py` — email rendering/sending.
+
 ## Output
 
 The scraper prints a summary and a few example profiles to stdout. Responses are cached on disk in `.cache/paws/` (TTL 24 hours by default).
