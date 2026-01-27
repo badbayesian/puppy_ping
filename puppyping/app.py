@@ -276,10 +276,6 @@ def _extract_media(url: str, soup: BeautifulSoup) -> DogMedia:
     return DogMedia(sorted(images), sorted(videos), sorted(embeds))
 
 
-# ===========================
-# Public API
-# ===========================
-
 @cached(ttl_seconds=CACHE_TIME)
 def fetch_adoptable_dog_profile_links() -> set[str]:
     """Fetch the adoptable dog profile links from PAWS.
