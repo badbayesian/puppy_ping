@@ -20,4 +20,4 @@ Clear the on-disk cache before running:
 
 ## Output
 
-The scraper prints a summary and a few example profiles to stdout. Responses are cached on disk in `.cache/paws/` (TTL 6 hours by default).
+The scraper prints a summary and a few example profiles to stdout. Responses are cached on disk in `.cache/paws/` (TTL 24 hours by default).
