@@ -27,7 +27,9 @@ def send_email(profiles: list["DogProfile"], send_to: str, send: bool = True) ->
     msg["Subject"] = f"PAWS Chicago - {len(profiles)} Adoptable Dogs as of {ts}"
 
     # -------- text version --------
-    text_body = "\n\n".join(str(p) for p in profiles) if profiles else "No profiles found."
+    text_body = (
+        "\n\n".join(str(p) for p in profiles) if profiles else "No profiles found."
+    )
     msg.set_content(text_body)
 
     # -------- html version --------
@@ -46,11 +48,14 @@ def send_email(profiles: list["DogProfile"], send_to: str, send: bool = True) ->
 
     cards = []
     for p in profiles:
-        ratings_html = "".join(
-            f"<li><b>{escape(k.replace('_', ' ').title())}:</b> {escape(str(p.ratings.get(k)) if p.ratings.get(k) is not None else '--')}</li>"
-            for k in order
-            if k in p.ratings
-        ) or "<li>--</li>"
+        ratings_html = (
+            "".join(
+                f"<li><b>{escape(k.replace('_', ' ').title())}:</b> {escape(str(p.ratings.get(k)) if p.ratings.get(k) is not None else '--')}</li>"
+                for k in order
+                if k in p.ratings
+            )
+            or "<li>--</li>"
+        )
 
         # show up to 3 images (email clients may block remote images until user clicks "display images")
         imgs = "".join(
@@ -109,7 +114,9 @@ def send_email(profiles: list["DogProfile"], send_to: str, send: bool = True) ->
 
     msg.add_alternative(html_body, subtype="html")
 
-    with smtplib.SMTP_SSL(os.environ["EMAIL_HOST"], int(os.environ["EMAIL_PORT"])) as smtp:
+    with smtplib.SMTP_SSL(
+        os.environ["EMAIL_HOST"], int(os.environ["EMAIL_PORT"])
+    ) as smtp:
         smtp.login(os.environ["EMAIL_USER"], os.environ["EMAIL_PASS"])
         if send:
             smtp.send_message(msg)

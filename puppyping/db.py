@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from logging import Logger
 import os
 from datetime import datetime, timezone
 from typing import Iterable
@@ -26,8 +27,7 @@ def get_connection() -> psycopg.Connection:
 
 def ensure_schema(conn: psycopg.Connection) -> None:
     with conn.cursor() as cur:
-        cur.execute(
-            """
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS dog_profiles (
                 id BIGSERIAL PRIMARY KEY,
                 dog_id INTEGER NOT NULL,
@@ -46,29 +46,22 @@ def ensure_schema(conn: psycopg.Connection) -> None:
                 scraped_at_utc TIMESTAMPTZ NOT NULL,
                 UNIQUE (dog_id, scraped_at_utc)
             );
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS cached_links (
                 id BIGSERIAL PRIMARY KEY,
                 links JSONB NOT NULL,
                 fetched_at_utc TIMESTAMPTZ NOT NULL
             );
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_dog_profiles_scraped_at
             ON dog_profiles (scraped_at_utc DESC);
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_cached_links_fetched_at
             ON cached_links (fetched_at_utc DESC);
-            """
-        )
+            """)
     conn.commit()
 
 
@@ -76,7 +69,7 @@ def _parse_scraped_at(ts: str) -> datetime:
     return datetime.fromisoformat(ts)
 
 
-def store_profiles(profiles: Iterable[DogProfile]) -> None:
+def store_profiles(profiles: Iterable[DogProfile], logger: Logger) -> None:
     profiles = list(profiles)
     if not profiles:
         return
@@ -147,31 +140,41 @@ def store_profiles(profiles: Iterable[DogProfile]) -> None:
                 ],
             )
         conn.commit()
+    if logger:
+        logger.info(f"Stored {len(profiles)} profiles.")
 
 
-def get_cached_links(max_age_seconds: int) -> list[str] | None:
+def get_cached_links(
+    max_age_seconds: int, logger: Logger | None = None
+) -> list[str] | None:
     with get_connection() as conn:
         ensure_schema(conn)
         with conn.cursor() as cur:
-            cur.execute(
-                """
+            cur.execute("""
                 SELECT links, fetched_at_utc
                 FROM cached_links
                 ORDER BY fetched_at_utc DESC
                 LIMIT 1;
-                """
-            )
+                """)
             row = cur.fetchone()
             if not row:
+                if logger:
+                    logger.info(f"No cached links found in Postgres.")
                 return None
             links, fetched_at = row
             age_seconds = (datetime.now(fetched_at.tzinfo) - fetched_at).total_seconds()
             if age_seconds > max_age_seconds:
+                if logger:
+                    logger.info(f"Cached links are stale (age {age_seconds:.0f}s).")
                 return None
+            if logger:
+                logger.info(
+                    f"Using cached links from Postgres (age {age_seconds:.0f}s)."
+                )
             return list(links)
 
 
-def store_cached_links(links: list[str]) -> None:
+def store_cached_links(links: list[str], logger: Logger | None = None) -> None:
     with get_connection() as conn:
         ensure_schema(conn)
         with conn.cursor() as cur:
@@ -183,3 +186,5 @@ def store_cached_links(links: list[str]) -> None:
                 (Json(links), datetime.now(timezone.utc)),
             )
         conn.commit()
+    if logger:
+        logger.info(f"Stored {len(links)} cached links in Postgres.")

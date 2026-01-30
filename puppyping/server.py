@@ -3,50 +3,59 @@ import os
 import time
 from datetime import datetime, timedelta
 import logging
+from typing import Optional
 
 from .db import store_profiles
 from .emailer import send_email
 from .puppy_scraper import (
-    __safe_less_than,
     CACHE_TIME,
     cache,
     fetch_adoptable_dog_profile_links,
     fetch_dog_profile,
 )
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
 
-def run_once() -> None:
+def __safe_less_than(a: Optional[float], b: float | int) -> bool:
+    """Return True when a is not None and less than b.
+
+    Args:
+        a: Value that may be None.
+        b: Threshold value.
+
+    Returns:
+        True if a is not None and a < b.
+    """
+    return a is not None and a < b
+
+
+def run(send_mail: bool = True, max_age: float = 8.0) -> None:
     """Run one scrape/email cycle."""
-    logger.info("Starting scrape run.")
+    logger.info(f"Starting scrape run.")
     links = fetch_adoptable_dog_profile_links()
-    profiles = [fetch_dog_profile(u) for u in links]
+    profiles = [fetch_dog_profile(u) for u in tqdm(links, desc="Fetching profiles")]
 
-    filtered_profiles = [p for p in profiles if __safe_less_than(p.age_months, 8)]
-    store_profiles(profiles)
-    logger.info("Stored %d profiles.", len(profiles))
-    _ = [
-        send_email(filtered_profiles, send_to=sending)
-        for sending in os.environ["EMAILS_TO"].split(",")
-    ]
-    logger.info("Sent emails to %d recipients.", len(os.environ["EMAILS_TO"].split(",")))
+    filtered_profiles = [p for p in profiles if __safe_less_than(p.age_months, max_age)]
+    store_profiles(filtered_profiles, logger=logger)
 
-
-def run_once_no_email() -> None:
-    """Run one scrape/store cycle without sending email."""
-    logger.info("Starting scrape run (no email).")
-    links = fetch_adoptable_dog_profile_links()
-    profiles = [fetch_dog_profile(u) for u in links]
-
-    store_profiles(profiles)
-    logger.info("Stored %d profiles.", len(profiles))
+    if send_email:
+        _ = [
+            send_email(filtered_profiles, send_to=sending)
+            for sending in os.environ["EMAILS_TO"].split(",")
+        ]
+        logger.info(
+            f"Sent emails to {len(os.environ['EMAILS_TO'].split(','))} recipients."
+        )
 
 
 def main() -> None:
     """CLI entrypoint for scraping and optional email output."""
     log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
-    logging.basicConfig(level=log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--clear-cache",
@@ -70,7 +79,7 @@ def main() -> None:
         print("Cache cleared.")
 
     if args.once:
-        run_once() if not args.no_email else run_once_no_email()
+        run(send_mail=True) if not args.no_email else run(send_mail=False)
         return
 
     while True:
@@ -83,7 +92,7 @@ def main() -> None:
         time.sleep(max(0, sleep_for))
 
         try:
-            run_once() if not args.no_email else run_once_no_email()
+            run(send_mail=True) if not args.no_email else run(send_mail=False)
         except Exception as exc:
             print(f"Run failed: {exc}")
 

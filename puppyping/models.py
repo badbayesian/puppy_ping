@@ -39,7 +39,9 @@ class DogProfile:
     description: Optional[str] = None
     media: DogMedia = field(default_factory=DogMedia)
 
-    scraped_at_utc: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    scraped_at_utc: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
 
     def __str__(self) -> str:
         """Return a human-readable profile summary.
@@ -47,15 +49,19 @@ class DogProfile:
         Returns:
             Formatted profile string.
         """
+
         def fmt(v):
             return v if v is not None else "--"
 
         order = ["children", "dogs", "cats", "home_alone", "activity", "environment"]
-        ratings_str = ", ".join(
-            f"{k.replace('_', ' ').title()}: {self.ratings.get(k) if self.ratings.get(k) is not None else '--'}"
-            for k in order
-            if k in self.ratings
-        ) or "--"
+        ratings_str = (
+            ", ".join(
+                f"{k.replace('_', ' ').title()}: {self.ratings.get(k) if self.ratings.get(k) is not None else '--'}"
+                for k in order
+                if k in self.ratings
+            )
+            or "--"
+        )
 
         return (
             f"DogProfile #{self.dog_id}\n"

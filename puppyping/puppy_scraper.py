@@ -57,6 +57,7 @@ def cached(ttl_seconds: int):
     Returns:
         A decorator that caches function results.
     """
+
     def decorator(fn):
         """Wrap a function with diskcache lookup.
 
@@ -66,6 +67,7 @@ def cached(ttl_seconds: int):
         Returns:
             Wrapped callable using diskcache.
         """
+
         def wrapper(*args, **kwargs):
             """Return cached value or compute and store it.
 
@@ -87,13 +89,16 @@ def cached(ttl_seconds: int):
             val = fn(*args, **kwargs)
             cache.set(key, val, expire=ttl_seconds)
             return val
+
         return wrapper
+
     return decorator
 
 
 # ===========================
 # HTTP + helpers
 # ===========================
+
 
 def _get_soup(url: str) -> BeautifulSoup:
     """Fetch a URL and parse HTML into BeautifulSoup.
@@ -125,7 +130,7 @@ def _get_name(soup: BeautifulSoup) -> Optional[str]:
     for h in soup.select("title"):
         title_text = h.get_text(strip=True)
         return title_text.split("|", 1)[0].strip()
-    
+
 
 def _parse_age_to_months(age: str | None) -> float | None:
     """Convert an age string into total months.
@@ -218,7 +223,7 @@ def _extract_single_rating(soup: BeautifulSoup, label: str) -> Optional[int]:
     if m == "=E2=80=94":
         m = None
     return m
-    
+
 
 def _extract_ratings(soup: BeautifulSoup) -> dict[str, Optional[int]]:
     """Extract all rating categories into a dict.
@@ -288,37 +293,40 @@ def fetch_adoptable_dog_profile_links() -> set[str]:
     """
     cached_links = None
     try:
-        cached_links = get_cached_links(CACHE_TIME)
+        cached_links = get_cached_links(CACHE_TIME, logger=logger)
     except Exception:
         cached_links = None
 
     if cached_links:
-        logger.info("Using cached links from Postgres (fresh).")
+        logger.info(f"Using cached links from Postgres (fresh).")
         return set(cached_links)
 
     try:
         soup = _get_soup(PAWS_AVAILABLE_URL)
-        links = set(sorted(
-            urljoin(PAWS_AVAILABLE_URL, a["href"])
-            for a in soup.select("a[href]")
-            if DOG_PROFILE_PATH_RE.match(a["href"])
-        ))
+        links = set(
+            sorted(
+                urljoin(PAWS_AVAILABLE_URL, a["href"])
+                for a in soup.select("a[href]")
+                if DOG_PROFILE_PATH_RE.match(a["href"])
+            )
+        )
+        logger.info(f"Fetched {len(links)} live links from PAWS.")
         try:
-            store_cached_links(sorted(links))
-            logger.info("Stored %d links in Postgres cache.", len(links))
+            store_cached_links(sorted(links), logger=logger)
+            logger.info(f"Stored {len(links)} links in Postgres cache.")
         except Exception:
-            logger.exception("Failed to store links in Postgres cache.")
+            logger.exception(f"Failed to store links in Postgres cache.")
             pass
         return links
     except Exception:
-        logger.exception("Live fetch failed; falling back to cached links.")
+        logger.exception(f"Live fetch failed; falling back to cached links.")
         # Fall back to last cached value even if stale or cache read previously failed.
         try:
-            cached_links = get_cached_links(CACHE_TIME * 365)
+            cached_links = get_cached_links(CACHE_TIME * 365, logger=logger)
         except Exception:
             cached_links = None
         if cached_links:
-            logger.info("Using cached links from Postgres (stale).")
+            logger.info(f"Using cached links from Postgres (stale).")
             return set(cached_links)
         raise
 
@@ -333,11 +341,10 @@ def fetch_dog_profile(url: str) -> DogProfile:
     Returns:
         Parsed DogProfile.
     """
-    logger.info("Fetching dog profile: %s", url)
+    logger.info(f"Fetching dog profile: {url}")
     soup = _get_soup(url)
     dog_id_match = re.search(r"/showdog/(\d+)", url)
     dog_id = int(dog_id_match.group(1))
-
 
     return DogProfile(
         dog_id=dog_id,
@@ -354,16 +361,3 @@ def fetch_dog_profile(url: str) -> DogProfile:
         description=_extract_description(soup),
         media=_extract_media(url, soup),
     )
-
-
-def __safe_less_than(a: Optional[float], b: float|int) -> bool:
-    """Return True when a is not None and less than b.
-
-    Args:
-        a: Value that may be None.
-        b: Threshold value.
-
-    Returns:
-        True if a is not None and a < b.
-    """
-    return a is not None and a < b
