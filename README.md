@@ -39,6 +39,15 @@ Healthcheck (verifies DB connectivity + schema):
 .\.venv\Scripts\python -m puppyping.healthcheck
 ```
 
+Run the full test suite:
+
+```powershell
+.\.venv\Scripts\python -m pip install -e .[dev]
+.\.venv\Scripts\python -m pytest
+```
+
+Docker defaults to a single run without email. If you want the daily schedule at 1 PM, remove `--once --no-email` from the `puppyping` service command in `compose.yml`.
+
 ## Structure
 
 - `puppyping/puppy_scraper.py` — scraping, parsing, and caching.
@@ -47,6 +56,7 @@ Healthcheck (verifies DB connectivity + schema):
 - `puppyping/emailer.py` — email rendering/sending.
 - `puppyping/db.py` — Postgres persistence + cached links.
 - `puppyping/healthcheck.py` — DB connectivity check.
+- `tests/` — pytest suite.
 
 ## Output
 
