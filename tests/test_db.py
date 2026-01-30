@@ -76,7 +76,7 @@ def test_store_profiles(monkeypatch):
         media=DogMedia(),
     )
     logger = DummyLogger()
-    db.store_profiles([profile], logger=logger)
+    db.store_profiles_in_db([profile], logger=logger)
     assert conn.cursor_obj.executemany_calls
     assert any("Stored 1 profiles." in m for m in logger.messages)
 

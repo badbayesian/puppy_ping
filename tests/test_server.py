@@ -28,8 +28,8 @@ def test_run_no_email(monkeypatch):
     monkeypatch.setattr(server, "fetch_adoptable_dog_profile_links", lambda: {"u"})
     monkeypatch.setattr(server, "fetch_dog_profile", lambda url: profile)
     stored = {}
-    monkeypatch.setattr(server, "store_profiles", lambda profiles, logger=None: stored.update({"count": len(list(profiles))}))
+    monkeypatch.setattr(server, "store_profiles_in_db", lambda profiles, logger=None: stored.update({"count": len(list(profiles))}))
     monkeypatch.setenv("EMAILS_TO", "thebutler.server@gmail.com")
     server.logger = DummyLogger()
-    server.run(send_mail=False, max_age=8.0)
+    server.run(send_mail=False, max_age=8.0, store_in_db=True)
     assert stored["count"] == 1

@@ -69,7 +69,7 @@ def _parse_scraped_at(ts: str) -> datetime:
     return datetime.fromisoformat(ts)
 
 
-def store_profiles(profiles: Iterable[DogProfile], logger: Logger) -> None:
+def store_profiles_in_db(profiles: Iterable[DogProfile], logger: Logger) -> None:
     profiles = list(profiles)
     if not profiles:
         return

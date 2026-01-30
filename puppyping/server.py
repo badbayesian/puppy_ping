@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import logging
 from typing import Optional
 
-from .db import store_profiles
+from .db import store_profiles_in_db
 from .emailer import send_email
 from .puppy_scraper import (
     CACHE_TIME,
@@ -31,15 +31,17 @@ def __safe_less_than(a: Optional[float], b: float | int) -> bool:
     return a is not None and a < b
 
 
-def run(send_mail: bool = True, max_age: float = 8.0) -> None:
+def run(
+    send_mail: bool = True, store_in_db: bool = True, max_age: float = 8.0
+) -> None:
     """Run one scrape/email cycle."""
     logger.info(f"Starting scrape run.")
     links = fetch_adoptable_dog_profile_links()
     profiles = [fetch_dog_profile(u) for u in tqdm(links, desc="Fetching profiles")]
 
     filtered_profiles = [p for p in profiles if __safe_less_than(p.age_months, max_age)]
-    store_profiles(filtered_profiles, logger=logger)
-
+    if store_in_db:
+        store_profiles_in_db(filtered_profiles, logger=logger)
     if send_email:
         _ = [
             send_email(filtered_profiles, send_to=sending)
@@ -72,14 +74,22 @@ def main() -> None:
         action="store_true",
         help="Skip sending emails",
     )
+    parser.add_argument(
+        "--no-storage",
+        action="store_true",
+        help="Skip storing results in database",
+    )
     args = parser.parse_args()
 
     if args.clear_cache:
         cache.clear()
         print("Cache cleared.")
 
+    store_in_db = not args.no_storage
+    send_mail = not args.no_email
+
     if args.once:
-        run(send_mail=True) if not args.no_email else run(send_mail=False)
+        run(send_mail=send_mail, store_in_db=store_in_db)
         return
 
     while True:
@@ -92,7 +102,7 @@ def main() -> None:
         time.sleep(max(0, sleep_for))
 
         try:
-            run(send_mail=True) if not args.no_email else run(send_mail=False)
+            run(send_mail=send_mail, store_in_db=store_in_db)
         except Exception as exc:
             print(f"Run failed: {exc}")
 
