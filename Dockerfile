@@ -12,7 +12,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # App + cron schedule
-COPY scrape.py crontab /app/
+COPY app.py crontab /app/
 # Entrypoint writes env -> /etc/environment so cron jobs inherit it
 COPY docker/entrypoint.sh /entrypoint.sh
 
