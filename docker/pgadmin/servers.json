@@ -1,0 +1,13 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "puppyping",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "puppyping",
+      "Username": "puppyping",
+      "SSLMode": "prefer"
+    }
+  }
+}
