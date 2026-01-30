@@ -12,17 +12,18 @@ if TYPE_CHECKING:
     from .models import DogProfile
 
 
-def send_email(profiles: list["DogProfile"], send: bool = True) -> None:
+def send_email(profiles: list["DogProfile"], send_to: str, send: bool = True) -> None:
     """Render and optionally send a summary email for dog profiles.
 
     Args:
         profiles: Profiles to include in the email.
+        send_to: Email address to send the message to.
         send: When True, send via SMTP; otherwise print the message.
     """
     ts = datetime.now().strftime("%Y-%m-%d %H")
     msg = EmailMessage()
     msg["From"] = os.environ["EMAIL_FROM"]
-    msg["To"] = os.environ["EMAIL_TO"]
+    msg["To"] = send_to
     msg["Subject"] = f"PAWS Chicago - {len(profiles)} Adoptable Dogs as of {ts}"
 
     # -------- text version --------

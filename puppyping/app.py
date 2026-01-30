@@ -11,6 +11,7 @@ import argparse
 import re
 from typing import Optional
 from urllib.parse import urljoin
+import os
 
 import requests
 from bs4 import BeautifulSoup
@@ -358,7 +359,7 @@ def main():
     profiles = [fetch_dog_profile(u) for u in links]
 
     filtered_profiles = [p for p in profiles if __safe_less_than(p.age_months, 8)]
-    send_email(filtered_profiles)
+    _ = [send_email(filtered_profiles, send_to=sending) for sending in os.environ["EMAILS_TO"].split(",")]
 
 
 if __name__ == "__main__":
