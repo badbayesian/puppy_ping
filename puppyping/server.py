@@ -45,7 +45,8 @@ def run_once_no_email() -> None:
 
 def main() -> None:
     """CLI entrypoint for scraping and optional email output."""
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(level=log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--clear-cache",

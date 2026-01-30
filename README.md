@@ -33,6 +33,12 @@ docker compose up -d pgadmin
 
 Open http://localhost:5050 and log in with `PGADMIN_DEFAULT_EMAIL` / `PGADMIN_DEFAULT_PASSWORD` from `.env`.
 
+Healthcheck (verifies DB connectivity + schema):
+
+```powershell
+.\.venv\Scripts\python -m puppyping.healthcheck
+```
+
 ## Structure
 
 - `puppyping/puppy_scraper.py` — scraping, parsing, and caching.
@@ -40,6 +46,7 @@ Open http://localhost:5050 and log in with `PGADMIN_DEFAULT_EMAIL` / `PGADMIN_DE
 - `puppyping/models.py` — dataclasses for `DogProfile` and `DogMedia`.
 - `puppyping/emailer.py` — email rendering/sending.
 - `puppyping/db.py` — Postgres persistence + cached links.
+- `puppyping/healthcheck.py` — DB connectivity check.
 
 ## Output
 

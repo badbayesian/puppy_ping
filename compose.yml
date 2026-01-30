@@ -32,6 +32,7 @@ services:
       - .env
     environment:
       TZ: America/Chicago
+      PYTHONUNBUFFERED: 1
       PGHOST: ${PGHOST}
       PGPORT: ${PGPORT}
       PGUSER: ${PGUSER}
@@ -51,4 +52,6 @@ services:
       - python
       - -m
       - puppyping
+      - --once
+      - --no-email
     restart: no

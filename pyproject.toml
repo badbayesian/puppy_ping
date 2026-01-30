@@ -21,7 +21,8 @@ dependencies = [
 ]
 
 [project.scripts]
-puppyping = "puppyping.__main__:main"
+puppyping = "puppyping.server:main"
+puppyping-healthcheck = "puppyping.healthcheck:main"
 
 [tool.setuptools]
 packages = ["puppyping"]
