@@ -8,7 +8,8 @@ Create a virtual environment, install deps, and run once:
 
 ```powershell
 py -m venv .venv
-.\.venv\Scripts\python -m pip install -r requirements.txt
+.\.venv\Scripts\python -m pip install .
+docker compose up -d postgres
 .\.venv\Scripts\python -m puppyping
 ```
 
@@ -20,7 +21,8 @@ Clear the on-disk cache before running:
 
 ## Structure
 
-- `puppyping/app.py` — scraping, parsing, caching, and CLI entrypoint.
+- `puppyping/puppy_scraper.py` — scraping, parsing, caching, and parsing.
+- `puppyping/server.py` — scheduler loop + persistence + email dispatch.
 - `puppyping/models.py` — dataclasses for `DogProfile` and `DogMedia`.
 - `puppyping/emailer.py` — email rendering/sending.
 

@@ -8,14 +8,20 @@ version = "0.1.0"
 description = "Scrape puppy listings from PAWS Chicago."
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
   {name = "badbayesian"},
 ]
-dependencies = 
+dependencies = [
+  "requests",
+  "beautifulsoup4",
+  "diskcache",
+  "python-dotenv",
+  "psycopg[binary]",
+]
 
 [project.scripts]
-puppyping = "puppyping.app:main"
+puppyping = "puppyping.__main__:main"
 
 [tool.setuptools]
 packages = ["puppyping"]

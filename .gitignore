@@ -2,6 +2,9 @@
 __pycache__/
 *.pyc
 .cache/
+data/cache/
+data/postgres/
+data/pgadmin/
 .env
 .ipynb_checkpoints/
 puppyping.egg-info/

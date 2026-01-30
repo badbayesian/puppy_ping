@@ -13,20 +13,23 @@ from typing import Optional
 from urllib.parse import urljoin
 import os
 
+import logging
 import requests
 from bs4 import BeautifulSoup
 from diskcache import Cache
 from dotenv import load_dotenv
 
 try:
-    from .emailer import send_email
     from .models import DogMedia, DogProfile
-except ImportError:  # Allows running as a script: python puppyping/app.py
-    from emailer import send_email
+    from .db import get_cached_links, store_cached_links
+except ImportError:  # Allows running as a script: python puppyping/puppy_scraper.py
     from models import DogMedia, DogProfile
+    from db import get_cached_links, store_cached_links
 
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 # ===========================
 # Constants
@@ -42,7 +45,7 @@ CACHE_TIME = 24 * 60 * 60  # 24 hours
 # Cache
 # ===========================
 
-cache = Cache("./.cache/paws")
+cache = Cache("./data/cache/paws")
 
 
 def cached(ttl_seconds: int):
@@ -277,19 +280,47 @@ def _extract_media(url: str, soup: BeautifulSoup) -> DogMedia:
     return DogMedia(sorted(images), sorted(videos), sorted(embeds))
 
 
-@cached(ttl_seconds=CACHE_TIME)
 def fetch_adoptable_dog_profile_links() -> set[str]:
     """Fetch the adoptable dog profile links from PAWS.
 
     Returns:
         Set of profile URLs.
     """
-    soup = _get_soup(PAWS_AVAILABLE_URL)
-    return set(sorted(
-        urljoin(PAWS_AVAILABLE_URL, a["href"])
-        for a in soup.select("a[href]")
-        if DOG_PROFILE_PATH_RE.match(a["href"])
-    ))
+    cached_links = None
+    try:
+        cached_links = get_cached_links(CACHE_TIME)
+    except Exception:
+        cached_links = None
+
+    if cached_links:
+        logger.info("Using cached links from Postgres (fresh).")
+        return set(cached_links)
+
+    try:
+        soup = _get_soup(PAWS_AVAILABLE_URL)
+        links = set(sorted(
+            urljoin(PAWS_AVAILABLE_URL, a["href"])
+            for a in soup.select("a[href]")
+            if DOG_PROFILE_PATH_RE.match(a["href"])
+        ))
+        try:
+            store_cached_links(sorted(links))
+            logger.info("Stored %d links in Postgres cache.", len(links))
+        except Exception:
+            logger.exception("Failed to store links in Postgres cache.")
+            pass
+        return links
+    except Exception:
+        logger.exception("Live fetch failed; falling back to cached links.")
+        # Fall back to last cached value even if stale or cache read previously failed.
+        try:
+            cached_links = get_cached_links(CACHE_TIME * 365)
+        except Exception:
+            cached_links = None
+        if cached_links:
+            logger.info("Using cached links from Postgres (stale).")
+            return set(cached_links)
+        raise
 
 
 @cached(ttl_seconds=CACHE_TIME)
@@ -302,6 +333,7 @@ def fetch_dog_profile(url: str) -> DogProfile:
     Returns:
         Parsed DogProfile.
     """
+    logger.info("Fetching dog profile: %s", url)
     soup = _get_soup(url)
     dog_id_match = re.search(r"/showdog/(\d+)", url)
     dog_id = int(dog_id_match.group(1))
@@ -335,32 +367,3 @@ def __safe_less_than(a: Optional[float], b: float|int) -> bool:
         True if a is not None and a < b.
     """
     return a is not None and a < b
-
-
-# ===========================
-# Main (with argparse)
-# ===========================
-
-def main():
-    """CLI entrypoint for scraping and optional email output."""
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--clear-cache",
-        action="store_true",
-        help="Clear disk cache before running"
-    )
-    args = parser.parse_args()
-
-    if args.clear_cache:
-        cache.clear()
-        print("Cache cleared.")
-
-    links = fetch_adoptable_dog_profile_links()
-    profiles = [fetch_dog_profile(u) for u in links]
-
-    filtered_profiles = [p for p in profiles if __safe_less_than(p.age_months, 8)]
-    _ = [send_email(filtered_profiles, send_to=sending) for sending in os.environ["EMAILS_TO"].split(",")]
-
-
-if __name__ == "__main__":
-    main()
