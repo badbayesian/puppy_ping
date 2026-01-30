@@ -1,10 +1,13 @@
 .venv/
 __pycache__/
 *.pyc
-.cache/
+.env
+.ipynb_checkpoints/
+.mypy_cache/
+.pytest_cache/
+build/
+dist/
+*.egg-info/
 data/cache/
 data/postgres/
 data/pgadmin/
-.env
-.ipynb_checkpoints/
-puppyping.egg-info/
