@@ -1,4 +1,24 @@
 services:
+  puppyping:
+    build:
+      context: https://github.com/badbayesian/puppy_ping.git
+      dockerfile: Dockerfile
+    container_name: puppyping
+    environment:
+      TZ: America/Chicago
+      EMAIL_HOST: ${EMAIL_HOST}
+      EMAIL_PORT: ${EMAIL_PORT}
+      EMAIL_USER: ${EMAIL_USER}
+      EMAIL_PASS: ${EMAIL_PASS}
+      EMAIL_FROM: ${EMAIL_FROM}
+      EMAILS_TO: ${EMAILS_TO}
+    volumes:
+      - /mnt/thebutler/config/puppy_ping/cache:/app/.cache
+    command:
+      - python
+      - -m
+      - puppyping
+    restart: no
   postgres:
     image: postgres:16
     container_name: puppyping-postgres
@@ -8,53 +28,19 @@ services:
       POSTGRES_PASSWORD: ${PGPASSWORD}
       TZ: America/Chicago
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
+      - /mnt/thebutler/config/puppy_ping/data/postgres:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - 5433:5432
   pgadmin:
     image: dpage/pgadmin4:8
     container_name: puppyping-pgadmin
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
-      PGADMIN_CONFIG_SERVER_MODE: "True"
     ports:
-      - "5050:80"
+      - 5050:80
     volumes:
-      - ./data/pgadmin:/var/lib/pgadmin
-      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json
-      - ./docker/pgadmin/pgpass:/pgpass
+      - /mnt/thebutler/config/puppy_ping/data/pgadmin:/var/lib/pgadmin
     depends_on:
       - postgres
-  puppyping:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: puppyping
-    env_file:
-      - .env
-    environment:
-      TZ: America/Chicago
-      PYTHONUNBUFFERED: 1
-      PGHOST: ${PGHOST}
-      PGPORT: ${PGPORT}
-      PGUSER: ${PGUSER}
-      PGPASSWORD: ${PGPASSWORD}
-      PGDATABASE: ${PGDATABASE}
-      EMAIL_HOST: ${EMAIL_HOST}
-      EMAIL_PORT: ${EMAIL_PORT}
-      EMAIL_USER: ${EMAIL_USER}
-      EMAIL_PASS: ${EMAIL_PASS}
-      EMAIL_FROM: ${EMAIL_FROM}
-      EMAILS_TO: ${EMAILS_TO}
-    volumes:
-      - ./data/cache:/app/.cache
-    depends_on:
-      - postgres
-    command:
-      - python
-      - -m
-      - puppyping
-      - --once
-      - --no-email
-    restart: no
+networks: {}
