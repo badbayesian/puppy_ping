@@ -32,7 +32,7 @@ def __safe_less_than(a: Optional[float], b: float | int) -> bool:
 
 
 def run(
-    send_mail: bool = True, store_in_db: bool = True, max_age: float = 8.0
+    send_ping: bool = True, store_in_db: bool = True, max_age: float = 8.0
 ) -> None:
     """Run one scrape/email cycle."""
     logger.info(f"Starting scrape run.")
@@ -42,7 +42,7 @@ def run(
     filtered_profiles = [p for p in profiles if __safe_less_than(p.age_months, max_age)]
     if store_in_db:
         store_profiles_in_db(filtered_profiles, logger=logger)
-    if send_email:
+    if send_ping:
         _ = [
             send_email(filtered_profiles, send_to=sending)
             for sending in os.environ["EMAILS_TO"].split(",")
@@ -86,10 +86,10 @@ def main() -> None:
         print("Cache cleared.")
 
     store_in_db = not args.no_storage
-    send_mail = not args.no_email
-
+    send_ping = not args.no_email
+    
     if args.once:
-        run(send_mail=send_mail, store_in_db=store_in_db)
+        run(send_ping=send_ping, store_in_db=store_in_db)
         return
 
     while True:
@@ -102,7 +102,7 @@ def main() -> None:
         time.sleep(max(0, sleep_for))
 
         try:
-            run(send_mail=send_mail, store_in_db=store_in_db)
+            run(send_ping=send_ping, store_in_db=store_in_db)
         except Exception as exc:
             print(f"Run failed: {exc}")
 
