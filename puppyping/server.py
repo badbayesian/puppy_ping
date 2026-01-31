@@ -48,7 +48,7 @@ def run(
             for sending in os.environ["EMAILS_TO"].split(",")
         ]
         logger.info(
-            f"Sent emails to {len(os.environ['EMAILS_TO'].split(','))} recipients."
+            f"Sent email to {len(os.environ['EMAILS_TO'].split(','))} recipients."
         )
 
 
