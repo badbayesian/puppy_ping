@@ -5,10 +5,24 @@ import os
 from datetime import datetime, timezone
 from typing import Iterable
 
-import psycopg
-from psycopg.types.json import Json
+try:
+    import psycopg
+    from psycopg.types.json import Json
+except ModuleNotFoundError as exc:  # Optional dependency for DB features
+    psycopg = None
+    Json = None
+    _PSYCOPG_IMPORT_ERROR = exc
+else:
+    _PSYCOPG_IMPORT_ERROR = None
 
 from .models import DogProfile
+
+
+def _require_psycopg() -> None:
+    if psycopg is None:
+        raise ModuleNotFoundError(
+            "psycopg is required for database operations. Install it to enable storage."
+        ) from _PSYCOPG_IMPORT_ERROR
 
 
 def _get_pg_config() -> dict[str, str | int]:
@@ -22,6 +36,7 @@ def _get_pg_config() -> dict[str, str | int]:
 
 
 def get_connection() -> psycopg.Connection:
+    _require_psycopg()
     return psycopg.connect(**_get_pg_config())
 
 
@@ -70,6 +85,7 @@ def _parse_scraped_at(ts: str) -> datetime:
 
 
 def store_profiles_in_db(profiles: Iterable[DogProfile], logger: Logger) -> None:
+    _require_psycopg()
     profiles = list(profiles)
     if not profiles:
         return
@@ -147,6 +163,7 @@ def store_profiles_in_db(profiles: Iterable[DogProfile], logger: Logger) -> None
 def get_cached_links(
     max_age_seconds: int, logger: Logger | None = None
 ) -> list[str] | None:
+    _require_psycopg()
     with get_connection() as conn:
         ensure_schema(conn)
         with conn.cursor() as cur:
@@ -175,6 +192,7 @@ def get_cached_links(
 
 
 def store_cached_links(links: list[str], logger: Logger | None = None) -> None:
+    _require_psycopg()
     with get_connection() as conn:
         ensure_schema(conn)
         with conn.cursor() as cur:
