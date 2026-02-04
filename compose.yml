@@ -15,10 +15,6 @@ services:
       EMAILS_TO: ${EMAILS_TO}
     volumes:
       - /mnt/thebutler/config/puppy_ping/cache:/app/.cache
-    command:
-      - python
-      - -m
-      - puppyping
     restart: no
   postgres:
     image: postgres:16
