@@ -6,4 +6,4 @@ COPY puppyping/ /app/puppyping/
 RUN pip install --no-cache-dir .
 
 VOLUME ["/data"]
-CMD ["python", "-m", "puppyping"]
+CMD ["python", "-m", "puppyping",  "--once", "--no-email"]

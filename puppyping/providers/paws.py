@@ -13,7 +13,7 @@ import logging
 from diskcache import Cache
 from dotenv import load_dotenv
 
-from .utils import (
+from .scrape_helpers import (
     _get_soup,
     _get_name,
     _parse_age_to_months,
@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 # Constants
 # ===========================
 
+DOG_SOURCE = "paws_chicago"
 PAWS_AVAILABLE_URL = "https://www.pawschicago.org/our-work/pets-adoption/pets-available"
 DOG_PROFILE_PATH_RE = re.compile(r"^/pet-available-for-adoption/showdog/\d+$")
 CANTO_IMAGE_PREFIX = "https://pawschicago.canto.com/direct/image/"
@@ -108,7 +109,7 @@ def fetch_adoptable_dog_profile_links_paws() -> set[str]:
     """
     cached_links = None
     try:
-        cached_links = get_cached_links(CACHE_TIME, logger=logger)
+        cached_links = get_cached_links(DOG_SOURCE, CACHE_TIME, logger=logger)
     except Exception:
         cached_links = None
 
@@ -127,7 +128,7 @@ def fetch_adoptable_dog_profile_links_paws() -> set[str]:
         )
         logger.info(f"Fetched {len(links)} live links from PAWS.")
         try:
-            store_cached_links(sorted(links), logger=logger)
+            store_cached_links(DOG_SOURCE, sorted(links), logger=logger)
             logger.info(f"Stored {len(links)} links in Postgres cache.")
         except Exception:
             logger.exception(f"Failed to store links in Postgres cache.")
@@ -137,7 +138,7 @@ def fetch_adoptable_dog_profile_links_paws() -> set[str]:
         logger.exception(f"Live fetch failed; falling back to cached links.")
         # Fall back to last cached value even if stale or cache read previously failed.
         try:
-            cached_links = get_cached_links(CACHE_TIME * 365, logger=logger)
+            cached_links = get_cached_links(DOG_SOURCE, CACHE_TIME * 365, logger=logger)
         except Exception:
             cached_links = None
         if cached_links:

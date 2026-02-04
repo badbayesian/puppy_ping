@@ -19,6 +19,11 @@ class DummyCursor:
     def fetchone(self):
         return self.rows.pop(0) if self.rows else None
 
+    def fetchall(self):
+        rows = self.rows
+        self.rows = []
+        return rows
+
     def __enter__(self):
         return self
 
@@ -83,20 +88,20 @@ def test_store_profiles(monkeypatch):
 
 def test_get_cached_links_fresh(monkeypatch):
     fetched_at = datetime.now(timezone.utc)
-    conn = DummyConn(rows=[(["a", "b"], fetched_at)])
+    conn = DummyConn(rows=[(fetched_at,), ("a",), ("b",)])
     monkeypatch.setattr(db, "get_connection", lambda: conn)
     logger = DummyLogger()
-    links = db.get_cached_links(60, logger=logger)
+    links = db.get_cached_links("paws_chicago", 60, logger=logger)
     assert links == ["a", "b"]
     assert any("Using cached links" in m for m in logger.messages)
 
 
 def test_get_cached_links_stale(monkeypatch):
     fetched_at = datetime.now(timezone.utc) - timedelta(seconds=120)
-    conn = DummyConn(rows=[(["a"], fetched_at)])
+    conn = DummyConn(rows=[(fetched_at,), ("a",)])
     monkeypatch.setattr(db, "get_connection", lambda: conn)
     logger = DummyLogger()
-    links = db.get_cached_links(60, logger=logger)
+    links = db.get_cached_links("paws_chicago", 60, logger=logger)
     assert links is None
     assert any("stale" in m for m in logger.messages)
 
@@ -105,6 +110,6 @@ def test_store_cached_links(monkeypatch):
     conn = DummyConn()
     monkeypatch.setattr(db, "get_connection", lambda: conn)
     logger = DummyLogger()
-    db.store_cached_links(["x"], logger=logger)
-    assert conn.cursor_obj.executed
+    db.store_cached_links("paws_chicago", ["x"], logger=logger)
+    assert conn.cursor_obj.executemany_calls
     assert any("Stored 1 cached links" in m for m in logger.messages)

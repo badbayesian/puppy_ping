@@ -4,6 +4,7 @@ from typing import Callable
 
 from .paws import fetch_adoptable_dog_profile_links_paws, fetch_dog_profile_paws
 from .wrightway import fetch_adoptable_dog_profile_links_wrightway, fetch_dog_profile_wrightway
+from ..models import DogProfile
 
 
 FETCH_LINKS: dict[str, Callable[[], set[str]]] = {
@@ -24,7 +25,7 @@ def fetch_adoptable_dog_profile_links(source: str) -> set[str]:
         raise ValueError(f"Unknown source='{source}'. Options: {sorted(FETCH_LINKS)}") from e
 
 
-def fetch_dog_profile(source: str, url: str):
+def fetch_dog_profile(source: str, url: str) -> DogProfile:
     try:
         return FETCH_PROFILE[source](url)
     except KeyError as e:

@@ -1,7 +1,7 @@
 services:
   puppyping:
     build:
-      context: https://github.com/badbayesian/puppy_ping.git
+      context: . #https://github.com/badbayesian/puppy_ping.git
       dockerfile: Dockerfile
     container_name: puppyping
     environment:
@@ -12,15 +12,24 @@ services:
       EMAIL_PASS: ${EMAIL_PASS}
       EMAIL_FROM: ${EMAIL_FROM}
       EMAILS_TO: ${EMAILS_TO}
+      PGHOST: ${PGHOST}
+      PGPORT: ${PGPORT}
+      PGUSER: ${PGUSER}
+      PGPASSWORD: ${PGPASSWORD}
+      PGDATABASE: ${PGDATABASE}
     volumes:
       - /mnt/thebutler/config/puppy_ping/cache:/app/.cache
     command:
       - python
       - -m
       - puppyping
+      - --once
+      - --no-email
+    depends_on:
+      - postgres
     restart: no
   postgres:
-    image: postgres:16
+    image: postgres
     container_name: puppyping-postgres
     environment:
       POSTGRES_DB: ${PGDATABASE}
@@ -28,11 +37,11 @@ services:
       POSTGRES_PASSWORD: ${PGPASSWORD}
       TZ: America/Chicago
     volumes:
-      - /mnt/thebutler/config/puppy_ping/data/postgres:/var/lib/postgresql/data
+      - /mnt/thebutler/config/puppy_ping/data/postgres:/var/lib/postgresql
     ports:
       - 5433:5432
   pgadmin:
-    image: dpage/pgadmin4:8
+    image: dpage/pgadmin4
     container_name: puppyping-pgadmin
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
@@ -40,7 +49,37 @@ services:
     ports:
       - 5050:80
     volumes:
-      - /mnt/thebutler/config/puppy_ping/data/pgadmin:/var/lib/pgadmin
+      - pgadmin-data:/var/lib/pgadmin
+    configs:
+      - source: pgadmin-pgpass
+        target: /config/pgpass
+        uid: "5050"
+        gid: "5050"
+        mode: 0400
+      - source: pgadmin-servers
+        target: /pgadmin4/servers.json
+        mode: 0444
     depends_on:
       - postgres
 networks: {}
+configs:
+  pgadmin-servers:
+    content: |
+      {
+        "Servers": {
+          "1": {
+            "Name": "PuppyPing Postgres",
+            "Group": "Servers",
+            "Host": "postgres",
+            "Port": 5432,
+            "MaintenanceDB": "${PGDATABASE}",
+            "Username": "${PGUSER}",
+            "PassFile": "/config/pgpass"
+          }
+        }
+      }
+  pgadmin-pgpass:
+    content: |
+      postgres:5432:*:${PGUSER}:${PGPASSWORD}
+volumes:
+  pgadmin-data:

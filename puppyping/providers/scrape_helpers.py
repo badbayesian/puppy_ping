@@ -2,19 +2,15 @@ from __future__ import annotations
 
 import re
 from typing import Optional
-from urllib.parse import urljoin
+from urllib.parse import urljoin, parse_qs, urlparse
 
 import requests
 from bs4 import BeautifulSoup
 
 try:
     from ..models import DogMedia
-except ImportError:  # Allows running as a script: python puppyping/providers/utils.py
+except ImportError:  # Allows running as a script: python puppyping/providers/scrape_helpers.py
     from models import DogMedia
-
-# ===========================
-# HTTP + helpers
-# ===========================
 
 
 def _get_soup(url: str) -> BeautifulSoup:
@@ -33,6 +29,19 @@ def _get_soup(url: str) -> BeautifulSoup:
     r = requests.get(url, headers=headers, timeout=30)
     r.raise_for_status()
     return BeautifulSoup(r.text, "html.parser")
+
+def _clean(s: str) -> str:
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _extract_query_id(url: str) -> Optional[int]:
+    try:
+        qs = parse_qs(urlparse(url).query)
+        if "id" in qs:
+            return int(qs["id"][0])
+    except Exception:
+        pass
+    return None
 
 
 def _get_name(soup: BeautifulSoup) -> Optional[str]:
