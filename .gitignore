@@ -12,3 +12,4 @@ dist/
 data/cache/
 data/postgres/
 data/pgadmin/
+*.ipynb
