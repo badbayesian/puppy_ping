@@ -1,13 +1,13 @@
-FROM python:3.12-slim AS base
+FROM python:3.12-slim
 WORKDIR /app
 
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
 COPY pyproject.toml README.md ./
-COPY puppyping/ /app/puppyping/
-RUN pip install --no-cache-dir .
+COPY puppyping/ ./puppyping/
 
-VOLUME ["/data"]
+RUN pip install --no-cache-dir -U pip \
+ && pip install --no-cache-dir .
+
 CMD ["python", "-m", "puppyping"]
-
-FROM base AS dev
-RUN pip install --no-cache-dir .[dev]
-CMD ["python", "-m", "puppyping", "--once", "--no-email"]

@@ -1,9 +1,8 @@
 services:
   puppyping:
     build:
-      context: ${BUILD_CONTEXT:-https://github.com/badbayesian/puppy_ping.git:main}
+      context: .#https://github.com/badbayesian/puppy_ping.git
       dockerfile: Dockerfile
-      target: ${BUILD_TARGET:-base}
     container_name: puppyping
     environment:
       TZ: America/Chicago
@@ -17,7 +16,7 @@ services:
       - /mnt/thebutler/config/puppy_ping/cache:/app/.cache
     restart: no
   postgres:
-    image: postgres:16
+    image: postgres:18
     container_name: puppyping-postgres
     environment:
       POSTGRES_DB: ${PGDATABASE}
@@ -25,19 +24,22 @@ services:
       POSTGRES_PASSWORD: ${PGPASSWORD}
       TZ: America/Chicago
     volumes:
-      - /mnt/thebutler/config/puppy_ping/data/postgres:/var/lib/postgresql/data
+      - /mnt/thebutler/config/puppy_ping/data/postgres:/var/lib/postgresql
     ports:
       - 5433:5432
   pgadmin:
-    image: dpage/pgadmin4:8
+    image: dpage/pgadmin4:latest
     container_name: puppyping-pgadmin
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+      PGADMIN_SERVER_JSON_FILE: /pgadmin4/servers.json
+      PGADMIN_REPLACE_SERVERS_ON_STARTUP: "True"
     ports:
       - 5050:80
     volumes:
       - /mnt/thebutler/config/puppy_ping/data/pgadmin:/var/lib/pgadmin
+      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
     depends_on:
       - postgres
 networks: {}
