@@ -1,0 +1,15 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "puppyping-postgres",
+      "Group": "Puppy Ping",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "puppyping",
+      "Username": "puppyping",
+      "ConnectionParameters": {
+        "sslmode": "prefer"
+      }
+    }
+  }
+}

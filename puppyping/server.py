@@ -99,8 +99,10 @@ def main() -> None:
     store_in_db = not args.no_storage
     send_ping = not args.no_email
     
+
+    run(send_ping=send_ping, store_in_db=store_in_db)
+
     if args.once:
-        run(send_ping=send_ping, store_in_db=store_in_db)
         return
 
     while True:

@@ -1,9 +1,13 @@
 FROM python:3.12-slim
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
-COPY puppyping/ /app/puppyping/
-RUN pip install --no-cache-dir .
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
-VOLUME ["/data"]
-CMD ["python", "-m", "puppyping",  "--once", "--no-email"]
+COPY pyproject.toml README.md ./
+COPY puppyping/ ./puppyping/
+
+RUN pip install --no-cache-dir -U pip \
+ && pip install --no-cache-dir .
+
+CMD ["python", "-m", "puppyping"]

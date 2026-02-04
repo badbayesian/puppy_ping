@@ -12,4 +12,6 @@ dist/
 data/cache/
 data/postgres/
 data/pgadmin/
+data/postgres_backups/
 *.ipynb
+compose.dev.yml
