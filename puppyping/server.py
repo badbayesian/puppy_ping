@@ -5,17 +5,17 @@ from datetime import datetime, timedelta
 import logging
 from typing import Optional
 
-from .db import store_profiles_in_db
+from .db import store_dog_status, store_profiles_in_db
 from .emailer import send_email
-from .puppy_scraper import (
-    CACHE_TIME,
-    cache,
+from .providers import (
     fetch_adoptable_dog_profile_links,
     fetch_dog_profile,
 )
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
+
+SOURCES = ("paws_chicago",)
 
 
 def __safe_less_than(a: Optional[float], b: float | int) -> bool:
@@ -36,12 +36,23 @@ def run(
 ) -> None:
     """Run one scrape/email cycle."""
     logger.info(f"Starting scrape run.")
-    links = fetch_adoptable_dog_profile_links()
-    profiles = [fetch_dog_profile(u) for u in tqdm(links, desc="Fetching profiles")]
+
+    links_by_source = {
+        source: fetch_adoptable_dog_profile_links(source) for source in SOURCES
+    }
+    if store_in_db:
+        for source, urls in links_by_source.items():
+            store_dog_status(source, list(urls), logger=logger)
+    profiles = [
+        fetch_dog_profile(source, url)
+        for source, urls in links_by_source.items()
+        for url in tqdm(urls, desc=f"Fetching profiles for {source}")
+    ]
 
     filtered_profiles = [p for p in profiles if __safe_less_than(p.age_months, max_age)]
     if store_in_db:
-        store_profiles_in_db(filtered_profiles, logger=logger)
+        # Store all scraped profiles; email filtering happens separately.
+        store_profiles_in_db(profiles, logger=logger)
     if send_ping:
         _ = [
             send_email(filtered_profiles, send_to=sending)

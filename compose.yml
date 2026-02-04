@@ -1,7 +1,7 @@
 services:
   puppyping:
     build:
-      context: .
+      context: . #https://github.com/badbayesian/puppy_ping.git
       dockerfile: Dockerfile
     container_name: puppyping
     environment:

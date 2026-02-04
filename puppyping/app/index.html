@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PupSwipe</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="background">
+      <div class="glow glow-a"></div>
+      <div class="glow glow-b"></div>
+      <div class="grid"></div>
+    </div>
+
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">PS</div>
+          <div>
+            <h1>PupSwipe</h1>
+            <p>Swipe right to swoon. Swipe left to pass.</p>
+          </div>
+        </div>
+        <div class="stats" id="stats">Loading pups...</div>
+      </header>
+
+      <main>
+        <section class="stack" id="stack">
+          <div class="state" id="state">Loading puppies from the database...</div>
+        </section>
+
+        <section class="controls" aria-label="Swipe controls">
+          <button class="btn nope" data-action="nope">Nope</button>
+          <button class="btn refresh" data-action="refresh">Refresh</button>
+          <button class="btn like" data-action="like">Like</button>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <div class="hint">Drag the card or use the arrow keys.</div>
+        <a class="profile-link" id="profile-link" href="#" target="_blank" rel="noopener">Open profile</a>
+      </footer>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
