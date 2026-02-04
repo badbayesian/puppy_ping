@@ -1,32 +1,53 @@
 services:
   puppyping:
     build:
-      context: .#https://github.com/badbayesian/puppy_ping.git
+      context: .
       dockerfile: Dockerfile
     container_name: puppyping
     environment:
       TZ: America/Chicago
+
       EMAIL_HOST: ${EMAIL_HOST}
       EMAIL_PORT: ${EMAIL_PORT}
       EMAIL_USER: ${EMAIL_USER}
       EMAIL_PASS: ${EMAIL_PASS}
       EMAIL_FROM: ${EMAIL_FROM}
       EMAILS_TO: ${EMAILS_TO}
+
+      # Database connection (internal docker network)
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: ${PGDATABASE}
+      PGUSER: ${PGUSER}
+      PGPASSWORD: ${PGPASSWORD}
     volumes:
       - /mnt/thebutler/config/puppy_ping/cache:/app/.cache
-    restart: no
+    depends_on:
+      - postgres
+    restart: "no"
+    networks:
+      - puppyping_net
+
   postgres:
-    image: postgres:18
+    image: postgres:latest
     container_name: puppyping-postgres
     environment:
+      TZ: America/Chicago
       POSTGRES_DB: ${PGDATABASE}
       POSTGRES_USER: ${PGUSER}
       POSTGRES_PASSWORD: ${PGPASSWORD}
-      TZ: America/Chicago
+
+      # CRITICAL: force writable, standard data directory
+      PGDATA: /var/lib/postgresql/data
     volumes:
-      - /mnt/thebutler/config/puppy_ping/data/postgres:/var/lib/postgresql
+      # CRITICAL: mount to /var/lib/postgresql/data ONLY
+      - /mnt/thebutler/config/puppy_ping/data/postgres:/var/lib/postgresql/data
     ports:
-      - 5433:5432
+      - "5433:5432"
+    restart: unless-stopped
+    networks:
+      - puppyping_net
+
   pgadmin:
     image: dpage/pgadmin4:latest
     container_name: puppyping-pgadmin
@@ -36,10 +57,17 @@ services:
       PGADMIN_SERVER_JSON_FILE: /pgadmin4/servers.json
       PGADMIN_REPLACE_SERVERS_ON_STARTUP: "True"
     ports:
-      - 5050:80
+      - "5050:80"
     volumes:
       - /mnt/thebutler/config/puppy_ping/data/pgadmin:/var/lib/pgadmin
-      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
+      # MUST be a host-absolute path when running from code-server
+      - /mnt/thebutler/media/repos/puppy_ping/docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
     depends_on:
       - postgres
-networks: {}
+    restart: unless-stopped
+    networks:
+      - puppyping_net
+
+networks:
+  puppyping_net:
+    name: puppyping_net
