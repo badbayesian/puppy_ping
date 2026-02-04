@@ -1,8 +1,9 @@
 services:
   puppyping:
     build:
-      context: https://github.com/badbayesian/puppy_ping.git:main
+      context: ${BUILD_CONTEXT:-https://github.com/badbayesian/puppy_ping.git:main}
       dockerfile: Dockerfile
+      target: ${BUILD_TARGET:-base}
     container_name: puppyping
     environment:
       TZ: America/Chicago
