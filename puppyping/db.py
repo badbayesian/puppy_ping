@@ -42,9 +42,6 @@ def _link_id(link: str) -> str:
 def _status_id(source: str, link: str) -> str:
     return hashlib.md5(f"{source}:{link}".encode("utf-8")).hexdigest()
 
-def _profile_id(url: str, scraped_at_utc: str) -> str:
-    return hashlib.md5(f"{url}|{scraped_at_utc}".encode("utf-8")).hexdigest()
-
 
 def get_connection() -> psycopg.Connection:
     _require_psycopg()
@@ -166,76 +163,8 @@ def ensure_schema(conn: psycopg.Connection) -> None:
             END $$;
             """)
         cur.execute("""
-            DO $$
-            BEGIN
-                IF EXISTS (
-                    SELECT 1
-                    FROM information_schema.columns
-                    WHERE table_schema = 'public'
-                      AND table_name = 'dog_profiles'
-                      AND column_name = 'id'
-                      AND data_type <> 'text'
-                ) THEN
-                    CREATE TABLE IF NOT EXISTS dog_profiles_new (
-                        id TEXT PRIMARY KEY,
-                        dog_id INTEGER NOT NULL,
-                        url TEXT NOT NULL,
-                        name TEXT,
-                        breed TEXT,
-                        gender TEXT,
-                        age_raw TEXT,
-                        age_months NUMERIC,
-                        weight_lbs NUMERIC,
-                        location TEXT,
-                        status TEXT,
-                        ratings JSONB,
-                        description TEXT,
-                        media JSONB,
-                        scraped_at_utc TIMESTAMPTZ NOT NULL,
-                        UNIQUE (dog_id, scraped_at_utc)
-                    );
-                    INSERT INTO dog_profiles_new (
-                        id,
-                        dog_id,
-                        url,
-                        name,
-                        breed,
-                        gender,
-                        age_raw,
-                        age_months,
-                        weight_lbs,
-                        location,
-                        status,
-                        ratings,
-                        description,
-                        media,
-                        scraped_at_utc
-                    )
-                    SELECT
-                        md5(url || '|' || scraped_at_utc::text),
-                        dog_id,
-                        url,
-                        name,
-                        breed,
-                        gender,
-                        age_raw,
-                        age_months,
-                        weight_lbs,
-                        location,
-                        status,
-                        ratings,
-                        description,
-                        media,
-                        scraped_at_utc
-                    FROM dog_profiles;
-                    DROP TABLE dog_profiles;
-                    ALTER TABLE dog_profiles_new RENAME TO dog_profiles;
-                END IF;
-            END $$;
-            """)
-        cur.execute("""
             CREATE TABLE IF NOT EXISTS dog_profiles (
-                id TEXT PRIMARY KEY,
+                id BIGSERIAL PRIMARY KEY,
                 dog_id INTEGER NOT NULL,
                 url TEXT NOT NULL,
                 name TEXT,
@@ -343,7 +272,6 @@ def store_profiles_in_db(profiles: Iterable[DogProfile], logger: Logger) -> None
             cur.executemany(
                 """
                 INSERT INTO dog_profiles (
-                    id,
                     dog_id,
                     url,
                     name,
@@ -360,7 +288,6 @@ def store_profiles_in_db(profiles: Iterable[DogProfile], logger: Logger) -> None
                     scraped_at_utc
                 )
                 VALUES (
-                    %(id)s,
                     %(dog_id)s,
                     %(url)s,
                     %(name)s,
@@ -380,7 +307,6 @@ def store_profiles_in_db(profiles: Iterable[DogProfile], logger: Logger) -> None
                 """,
                 [
                     {
-                        "id": _profile_id(p.url, p.scraped_at_utc),
                         "dog_id": p.dog_id,
                         "url": p.url,
                         "name": p.name,
