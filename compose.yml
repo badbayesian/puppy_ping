@@ -68,6 +68,33 @@ services:
     networks:
       - puppyping_net
 
+  pupswipe:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: puppyping-app
+    environment:
+      TZ: America/Chicago
+      PGHOST: ${PGHOST}
+      PGPORT: ${PGPORT}
+      PGUSER: ${PGUSER}
+      PGPASSWORD: ${PGPASSWORD}
+      PGDATABASE: ${PGDATABASE}
+    command:
+      - python
+      - -m
+      - puppyping.pupswipe.server
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    ports:
+      - 8000:8000
+    depends_on:
+      - postgres
+    restart: no
+
+
 networks:
   puppyping_net:
     name: puppyping_net

@@ -1,23 +1,58 @@
 # PuppyPing
 
-Scrapes adoptable dog profiles from PAWS Chicago.
+Scrapes adoptable dog profiles from a couple different Dog adoption centers in Chicago
 
 ## Quick start
 
-Create a virtual environment, install deps, and run once:
+### Run locally (recommended for development)
+
+1. Create/activate a virtual environment and install deps:
 
 ```powershell
-py -m venv .venv
-.\.venv\Scripts\python -m pip install .
-docker compose up -d postgres
-.\.venv\Scripts\python -m puppyping --once
+python -m venv .puppyping
+python -m pip install -e .[dev]
 ```
 
-Clear the on-disk cache before running:
+2. Update `puppy_ping/.env` with your info. Note that this repo uses gmail for smtp.
+
+```env
+# Email configuration
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=465
+EMAIL_USER=YOUR_EMAIL_USER
+EMAIL_PASS=YOUR_EMAIL_PASS
+EMAIL_FROM="Puppy Ping <YOUR_EMAIL_USER>"
+EMAILS_TO=YOUR_EMAILS_COMMA_SEPARATED
+
+# Postgres (docker-compose)
+PGHOST=postgres
+PGPORT=5432
+PGUSER=puppyping
+PGPASSWORD=puppyping
+PGDATABASE=puppyping
+
+# pgAdmin
+PGADMIN_DEFAULT_EMAIL=YOUR_PGADMIN_EMAIL
+# Escape $ so docker compose doesn't interpolate. Actual password can include a single $.
+PGADMIN_DEFAULT_PASSWORD=YOUR_PGADMIN_PASSWORD
+```
+
+3. Run a single scrape cycle:
 
 ```powershell
-.\.venv\Scripts\python -m puppyping --clear-cache
+python -m puppyping --once --no-storage
 ```
+
+### Run with Docker
+
+Build and run the full stack (app + Postgres):
+
+```powershell
+docker compose up --build
+```
+
+By default the container runs a single cycle without email. If you want the daily schedule at 1 PM,
+remove `--once --no-email` from the `puppyping` service command in `compose.yml` and restart the stack.
 
 Run a single cycle without sending email:
 
@@ -35,11 +70,6 @@ Open http://localhost:5050 and log in with `PGADMIN_DEFAULT_EMAIL` / `PGADMIN_DE
 pgAdmin auto-registers the Postgres server; if it does not appear, wipe the pgAdmin volume
 (`docker compose down -v`) and start it again.
 
-Healthcheck (verifies DB connectivity + schema):
-
-```powershell
-.\.venv\Scripts\python -m puppyping.healthcheck
-```
 
 Run the full test suite:
 
@@ -73,4 +103,3 @@ Each scrape run performs delta-style updates to the link/status tables:
 - `cached_links` uses a stable hash ID (md5 of `link`) and upserts rows. Links in the latest batch are marked active and get `last_active_utc` updated.
 - Links not seen in the latest batch for a given `source` are marked inactive (`is_active = false`).
 - `dog_status` mirrors the same pattern for “current active links” per source, while `dog_profiles` remains append-only history.
-
