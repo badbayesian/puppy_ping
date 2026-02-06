@@ -54,6 +54,36 @@ docker compose up --build
 By default the container runs a single cycle without email. If you want the daily schedule at 1 PM,
 remove `--once --no-email` from the `puppyping` service command in `compose.yml` and restart the stack.
 
+## PupSwipe (WIP)
+
+PupSwipe is a lightweight web UI for browsing the latest scraped dogs and recording left/right swipes.
+It reads from the same Postgres database as `puppyping`, so run a scrape at least once before opening it.
+
+### Run PupSwipe locally
+
+```powershell
+python -m puppyping.pupswipe.server --host 127.0.0.1 --port 8000
+```
+
+Open http://localhost:8000.
+
+### Run PupSwipe with Docker
+
+The `pupswipe` service is included in `compose.yml`:
+
+```powershell
+docker compose up --build pupswipe
+```
+
+Open http://localhost:8000.
+
+### PupSwipe API
+
+PupSwipe exposes a small JSON API:
+- `GET /api/puppies?limit=40` returns the latest unique dogs.
+- `POST /api/swipes` stores a swipe with `{ "dog_id": 123, "swipe": "left|right", "source": "paws" }`.
+- `GET /api/health` verifies DB connectivity.
+
 Run a single cycle without sending email:
 
 ```powershell
