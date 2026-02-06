@@ -104,8 +104,8 @@ pgAdmin auto-registers the Postgres server; if it does not appear, wipe the pgAd
 Run the full test suite:
 
 ```powershell
-.\.venv\Scripts\python -m pip install -e .[dev]
-.\.venv\Scripts\python -m pytest
+python -m pip install -e .[dev]
+python -m pytest
 ```
 
 Docker defaults to a single run without email. If you want the daily schedule at 1 PM, remove `--once --no-email` from the `puppyping` service command in `compose.yml`.
