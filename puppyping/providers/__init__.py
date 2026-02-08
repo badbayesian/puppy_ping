@@ -18,9 +18,9 @@ FETCH_PROFILE: dict[str, Callable[[str], object]] = {
 }
 
 
-def fetch_adoptable_dog_profile_links(source: str) -> set[str]:
+def fetch_adoptable_dog_profile_links(source: str, store_in_db: bool) -> set[str]:
     try:
-        return FETCH_LINKS[source]()
+        return FETCH_LINKS[source](store_in_db=store_in_db)
     except KeyError as e:
         raise ValueError(f"Unknown source='{source}'. Options: {sorted(FETCH_LINKS)}") from e
 

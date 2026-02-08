@@ -38,7 +38,7 @@ def run(
     logger.info(f"Starting scrape run.")
 
     links_by_source = {
-        source: fetch_adoptable_dog_profile_links(source) for source in SOURCES
+        source: fetch_adoptable_dog_profile_links(source, store_in_db) for source in SOURCES
     }
     if store_in_db:
         for source, urls in links_by_source.items():

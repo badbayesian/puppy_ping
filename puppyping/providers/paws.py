@@ -101,17 +101,18 @@ def cached(ttl_seconds: int):
 
 
 
-def fetch_adoptable_dog_profile_links_paws() -> set[str]:
+def fetch_adoptable_dog_profile_links_paws(store_in_db: bool) -> set[str]:
     """Fetch the adoptable dog profile links from PAWS.
 
     Returns:
         Set of profile URLs.
     """
     cached_links = None
-    try:
-        cached_links = get_cached_links(DOG_SOURCE, CACHE_TIME, logger=logger)
-    except Exception:
-        cached_links = None
+    if store_in_db:
+        try:
+            cached_links = get_cached_links(DOG_SOURCE, CACHE_TIME, logger=logger)
+        except Exception:
+            cached_links = None
 
     if cached_links:
         logger.info(f"Using cached links from Postgres (fresh).")
@@ -127,12 +128,13 @@ def fetch_adoptable_dog_profile_links_paws() -> set[str]:
             )
         )
         logger.info(f"Fetched {len(links)} live links from PAWS.")
-        try:
-            store_cached_links(DOG_SOURCE, sorted(links), logger=logger)
-            logger.info(f"Stored {len(links)} links in Postgres cache.")
-        except Exception:
-            logger.exception(f"Failed to store links in Postgres cache.")
-            pass
+        if store_in_db:
+            try:
+                store_cached_links(DOG_SOURCE, sorted(links), logger=logger)
+                logger.info(f"Stored {len(links)} links in Postgres cache.")
+            except Exception:
+                logger.exception(f"Failed to store links in Postgres cache.")
+                pass
         return links
     except Exception:
         logger.exception(f"Live fetch failed; falling back to cached links.")
