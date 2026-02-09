@@ -127,3 +127,54 @@ The schema does not enforce foreign keys between tables. Logical relationships a
 - `dog_swipes.dog_id` -> latest `dog_profiles.dog_id` rows
 - `cached_links.link` and `dog_status.link` -> `dog_profiles.url`
 - `dog_status.source` and `cached_links.source` align with provider names (for example `paws_chicago`, `wright_way`)
+
+## ERD
+
+The ERD below shows logical relationships used by the application.
+These relationships are not enforced by database foreign key constraints.
+
+```mermaid
+erDiagram
+    DOG_PROFILES {
+        bigint id PK
+        int dog_id
+        text url
+        timestamptz scraped_at_utc
+    }
+
+    CACHED_LINKS {
+        text id PK
+        text source
+        text link
+        bool is_active
+        timestamptz fetched_at_utc
+    }
+
+    DOG_STATUS {
+        text id PK
+        text source
+        text link
+        bool is_active
+        timestamptz last_active_utc
+    }
+
+    DOG_SWIPES {
+        bigint id PK
+        int dog_id
+        text swipe
+        text source
+        timestamptz created_at_utc
+    }
+
+    EMAIL_SUBSCRIBERS {
+        bigint id PK
+        text email
+        text source
+        timestamptz created_at_utc
+    }
+
+    DOG_PROFILES ||--o{ DOG_SWIPES : "logical via dog_id"
+    DOG_PROFILES ||--o{ CACHED_LINKS : "logical via url -> link"
+    DOG_PROFILES ||--o{ DOG_STATUS : "logical via url -> link"
+    CACHED_LINKS ||--|| DOG_STATUS : "logical alignment by source+link"
+```

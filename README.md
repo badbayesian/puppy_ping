@@ -38,11 +38,11 @@ Current behavior:
 flowchart LR
   U[Browser]
 
-  subgraph Stack[Docker Compose Containers]
-    PS[puppyping-pupswipe]
-    SC[puppyping-scraper]
-    PG[(puppyping-postgres)]
-    PA[puppyping-pgadmin]
+  subgraph Stack[Docker Containers]
+    PS[pupswipe]
+    SC[scraper]
+    PG[postgres]
+    PA[pgadmin]
   end
 
   U --> PS
