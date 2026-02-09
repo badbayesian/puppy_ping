@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import logging
 from typing import Optional
 
-from .db import store_dog_status, store_profiles_in_db
+from .db import get_email_subscribers, store_dog_status, store_profiles_in_db
 from .emailer import send_email
 from .providers import (
     fetch_adoptable_dog_profile_links,
@@ -15,7 +15,7 @@ from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
-SOURCES = ("paws_chicago",)
+SOURCES = ("paws_chicago", "wright_way")
 
 
 def __safe_less_than(a: Optional[float], b: float | int) -> bool:
@@ -54,12 +54,25 @@ def run(
         # Store all scraped profiles; email filtering happens separately.
         store_profiles_in_db(profiles, logger=logger)
     if send_ping:
-        _ = [
-            send_email(filtered_profiles, send_to=sending)
-            for sending in os.environ["EMAILS_TO"].split(",")
+        configured = [
+            email.strip()
+            for email in os.environ.get("EMAILS_TO", "").split(",")
+            if email.strip()
         ]
+        recipients = configured
+        if store_in_db:
+            try:
+                subscribers = get_email_subscribers(logger=logger)
+            except Exception as exc:
+                logger.warning(f"Could not load DB subscribers: {exc}")
+                subscribers = []
+            recipients = list(
+                dict.fromkeys([*configured, *[email for email in subscribers if email]])
+            )
+
+        _ = [send_email(filtered_profiles, send_to=sending) for sending in recipients]
         logger.info(
-            f"Sent email to {len(os.environ['EMAILS_TO'].split(','))} recipients."
+            f"Sent email to {len(recipients)} recipients."
         )
 
 

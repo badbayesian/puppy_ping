@@ -1,135 +1,158 @@
 # PuppyPing
 
-Scrapes adoptable dog profiles from a couple different Dog adoption centers in Chicago
+PuppyPing scrapes adoptable puppy profiles, stores them in Postgres, and serves a swipe UI (`PupSwipe`) for browsing and recording likes/nope actions.
 
-## Quick start
+Current behavior:
+- Scraper sources: `paws_chicago` and `wright_way`
+- PupSwipe feed: currently filtered to `paws_chicago` only
+- Swipe mapping: `right = Like`, `left = Nope`
 
-### Run locally (recommended for development)
+## Environment Modes
 
-1. Create/activate a virtual environment and install deps:
+`compose.yml` is the production baseline.
+
+`compose.dev.yml` is a development override layered on top of `compose.yml`.
+
+### Production vs Development
+
+- Prod (`compose.yml`):
+  - `pupswipe` default bind: `0.0.0.0:8000`
+  - Postgres port: `5433`
+  - pgAdmin port: `5050`
+  - volumes/network names: `puppyping_*`
+- Dev (`compose.yml` + `compose.dev.yml`):
+  - `pupswipe` default bind: `127.0.0.1:8001`
+  - Postgres port: `5434`
+  - pgAdmin port: `5051`
+  - container names, volumes, and network use `*_dev`
+  - source code bind-mounted for live Python edits
+  - scraper runs `--once --no-email` by default in dev
+
+## Mermaid Diagrams
+
+### Architecture
+
+```mermaid
+flowchart LR
+  U[Browser]
+
+  subgraph Stack[Docker Compose Containers]
+    PS[puppyping-pupswipe]
+    SC[puppyping-scraper]
+    PG[(puppyping-postgres)]
+    PA[puppyping-pgadmin]
+  end
+
+  U --> PS
+  U --> PA
+  PS --> PG
+  SC --> PG
+  PA --> PG
+```
+
+### Compose Layering
+
+```mermaid
+flowchart TD
+  A[compose.yml\nProduction baseline] --> B[Prod Stack]
+  A --> C[compose.dev.yml\nDev overrides]
+  C --> D[Dev Stack]
+```
+
+## Architecture Notes
+
+- `puppyping-scraper` orchestrates scrape runs, status updates, profile storage, and email dispatch.
+- `puppyping-pupswipe` serves the web UI and API, and records swipe events and subscriptions.
+- `puppyping-postgres` is the shared system of record for scraped profiles, link status, swipes, and subscribers.
+- `puppyping-pgadmin` is an admin UI for inspecting and managing the Postgres database.
+
+The scraper uses composition to support multiple providers without hard-coding provider logic into the runner:
+
+- `puppyping/server.py` iterates `SOURCES` and calls generic provider entry points.
+- `puppyping/providers/__init__.py` composes source-specific implementations through `FETCH_LINKS` and `FETCH_PROFILE` registries.
+- Each provider module implements the same contracts (`fetch_adoptable_dog_profile_links_*` and `fetch_dog_profile_*`) and is registered once.
+- To add another provider, implement the two functions in a new provider module and register it in the two maps; the scraper loop can use it immediately.
+
+## Setup
+
+### 1. Env Files
+
+Create env files from templates:
 
 ```powershell
-python -m venv .puppyping
-python -m pip install -e .[dev]
+cp .env.prod.example .env
+cp .env.dev.example .env.dev
 ```
 
-2. Update `puppy_ping/.env` with your info. Note that this repo uses gmail for smtp.
-
-```env
-# Email configuration
-EMAIL_HOST=smtp.gmail.com
-EMAIL_PORT=465
-EMAIL_USER=YOUR_EMAIL_USER
-EMAIL_PASS=YOUR_EMAIL_PASS
-EMAIL_FROM="Puppy Ping <YOUR_EMAIL_USER>"
-EMAILS_TO=YOUR_EMAILS_COMMA_SEPARATED
-
-# Postgres (docker-compose)
-PGHOST=postgres
-PGPORT=5432
-PGUSER=puppyping
-PGPASSWORD=puppyping
-PGDATABASE=puppyping
-
-# pgAdmin
-PGADMIN_DEFAULT_EMAIL=YOUR_PGADMIN_EMAIL
-# Escape $ so docker compose doesn't interpolate. Actual password can include a single $.
-PGADMIN_DEFAULT_PASSWORD=YOUR_PGADMIN_PASSWORD
-```
-
-3. Run a single scrape cycle:
+### 2. Run Production
 
 ```powershell
-python -m puppyping --once --no-storage
+docker compose --env-file .env -f compose.yml up --build -d
 ```
 
-### Run with Docker
-
-Build and run the full stack (app + Postgres):
+### 3. Run Development
 
 ```powershell
-docker compose up --build
+docker compose --env-file .env.dev -f compose.yml -f compose.dev.yml up --build
 ```
 
-By default the container runs a single cycle without email. If you want the daily schedule at 1 PM,
-remove `--once --no-email` from the `puppyping` service command in `compose.yml` and restart the stack.
+## Service Access
 
-## PupSwipe (WIP)
+- Prod PupSwipe: `http://<host-or-domain>:8000` (default)
+- Dev PupSwipe: `http://127.0.0.1:8001` (default)
+- Prod pgAdmin: `http://localhost:5050`
+- Dev pgAdmin: `http://localhost:5051`
 
-PupSwipe is a lightweight web UI for browsing the latest scraped dogs and recording left/right swipes.
-It reads from the same Postgres database as `puppyping`, so run a scrape at least once before opening it.
+## Common Commands
 
-### Run PupSwipe locally
+Run a one-shot scrape without sending email:
 
 ```powershell
-python -m puppyping.pupswipe.server --host 127.0.0.1 --port 8000
+docker compose --env-file .env -f compose.yml run --rm --no-deps -T puppyping python -m puppyping --once --no-email
 ```
 
-Open http://localhost:8000.
-
-### Run PupSwipe with Docker
-
-The `pupswipe` service is included in `compose.yml`:
-
-```powershell
-docker compose up --build pupswipe
-```
-
-Open http://localhost:8000.
-
-### PupSwipe API
-
-PupSwipe exposes a small JSON API:
-- `GET /api/puppies?limit=40` returns the latest unique dogs.
-- `POST /api/swipes` stores a swipe with `{ "dog_id": 123, "swipe": "left|right", "source": "paws" }`.
-- `GET /api/health` verifies DB connectivity.
-
-Run a single cycle without sending email:
-
-```powershell
-.\.venv\Scripts\python -m puppyping --once --no-email
-```
-
-Bring up pgAdmin for a UI:
-
-```powershell
-docker compose up -d pgadmin
-```
-
-Open http://localhost:5050 and log in with `PGADMIN_DEFAULT_EMAIL` / `PGADMIN_DEFAULT_PASSWORD` from `.env`.
-pgAdmin auto-registers the Postgres server; if it does not appear, wipe the pgAdmin volume
-(`docker compose down -v`) and start it again.
-
-
-Run the full test suite:
+Run tests:
 
 ```powershell
 python -m pip install -e .[dev]
 python -m pytest
 ```
 
-Docker defaults to a single run without email. If you want the daily schedule at 1 PM, remove `--once --no-email` from the `puppyping` service command in `compose.yml`.
+## PupSwipe API
 
-## Structure
+- `GET /api/puppies?limit=40` returns current feed items.
+- `POST /api/swipes` stores swipe events:
+  - `swipe: "right"` = like
+  - `swipe: "left"` = nope
+- `GET /api/health` checks DB connectivity.
 
-- `puppyping/server.py` - scheduler loop + persistence + email dispatch.
-- `puppyping/models.py` - dataclasses for `DogProfile` and `DogMedia`.
-- `puppyping/emailer.py` - email rendering/sending.
-- `puppyping/db.py` - Postgres persistence + cached links/status.
-- `puppyping/providers/` - source-specific scraping (PAWS, Wright-Way) + helpers.
-- `puppyping/healthcheck.py` - DB connectivity check.
-- `tests/` - pytest suite.
+Example payload:
 
-## Output
+```json
+{
+  "dog_id": 123,
+  "swipe": "right",
+  "source": "pupswipe"
+}
+```
 
-The scraper prints a summary and stores results in Postgres:
-- `dog_profiles` stores historical profile snapshots.
-- `cached_links` stores one row per link with `source`, `is_active`, and `last_active_utc`.
-- `dog_status` stores current active links per source.
+## Data Model (Postgres)
 
-## Delta Updates
+- `dog_profiles`: historical scraped snapshots.
+- `cached_links`: per-link cache with source + active flags.
+- `dog_status`: current active links by source.
+- `dog_swipes`: PupSwipe left/right interactions + basic client metadata.
+- `email_subscribers`: PuppyPing alert subscriptions.
 
-Each scrape run performs delta-style updates to the link/status tables:
-- `cached_links` uses a stable hash ID (md5 of `link`) and upserts rows. Links in the latest batch are marked active and get `last_active_utc` updated.
-- Links not seen in the latest batch for a given `source` are marked inactive (`is_active = false`).
-- `dog_status` mirrors the same pattern for “current active links” per source, while `dog_profiles` remains append-only history.
+## Legal Note in App
+
+PupSwipe displays a disclaimer that PuppyPing is not affiliated with any rescue, shelter, breeder, or adoption provider.
+
+## Project Structure
+
+- `puppyping/server.py`: scraper scheduling + persistence + email dispatch.
+- `puppyping/providers/`: source-specific scraping logic.
+- `puppyping/db.py`: Postgres schema and DB operations.
+- `puppyping/pupswipe/server.py`: PupSwipe web server + API.
+- `puppyping/models.py`: core dataclasses.
+- `tests/`: pytest suite.

@@ -2,6 +2,8 @@
 __pycache__/
 *.pyc
 .env
+.env.dev
+.env.prod
 .ipynb_checkpoints/
 .mypy_cache/
 .pytest_cache/
@@ -14,4 +16,3 @@ data/postgres/
 data/pgadmin/
 data/postgres_backups/
 *.ipynb
-compose.dev.yml

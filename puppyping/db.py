@@ -39,6 +39,7 @@ def _get_pg_config() -> dict[str, str | int]:
 def _link_id(link: str) -> str:
     return hashlib.md5(link.encode("utf-8")).hexdigest()
 
+
 def _status_id(source: str, link: str) -> str:
     return hashlib.md5(f"{source}:{link}".encode("utf-8")).hexdigest()
 
@@ -197,6 +198,22 @@ def ensure_schema(conn: psycopg.Connection) -> None:
             ON dog_profiles (scraped_at_utc DESC);
             """)
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS email_subscribers (
+                id BIGSERIAL PRIMARY KEY,
+                email TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'unknown',
+                created_at_utc TIMESTAMPTZ NOT NULL
+            );
+            """)
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_email_subscribers_email_lower
+            ON email_subscribers (LOWER(email));
+            """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_email_subscribers_created_at
+            ON email_subscribers (created_at_utc DESC);
+            """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS dog_status (
                 id TEXT PRIMARY KEY,
                 source TEXT NOT NULL,
@@ -258,6 +275,56 @@ def ensure_schema(conn: psycopg.Connection) -> None:
 
 def _parse_scraped_at(ts: str) -> datetime:
     return datetime.fromisoformat(ts)
+
+
+def add_email_subscriber(
+    email: str, source: str = "unknown", logger: Logger | None = None
+) -> bool:
+    _require_psycopg()
+    normalized = email.strip().lower()
+    if not normalized:
+        return False
+
+    with get_connection() as conn:
+        ensure_schema(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO email_subscribers (email, source, created_at_utc)
+                VALUES (%s, %s, %s)
+                ON CONFLICT DO NOTHING
+                RETURNING id;
+                """,
+                (normalized, source, datetime.now(timezone.utc)),
+            )
+            created = cur.fetchone() is not None
+        conn.commit()
+
+    if logger:
+        if created:
+            logger.info(f"Added email subscriber: {normalized}")
+        else:
+            logger.info(f"Email already subscribed: {normalized}")
+    return created
+
+
+def get_email_subscribers(logger: Logger | None = None) -> list[str]:
+    _require_psycopg()
+    with get_connection() as conn:
+        ensure_schema(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT email
+                FROM email_subscribers
+                ORDER BY created_at_utc ASC;
+                """
+            )
+            rows = cur.fetchall()
+    emails = [str(row[0]).strip().lower() for row in rows if row and row[0]]
+    if logger:
+        logger.info(f"Loaded {len(emails)} email subscribers from DB.")
+    return emails
 
 
 def store_profiles_in_db(profiles: Iterable[DogProfile], logger: Logger) -> None:

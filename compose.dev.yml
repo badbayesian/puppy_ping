@@ -1,0 +1,51 @@
+services:
+  puppyping:
+    container_name: puppyping-scraper-dev
+    environment:
+      LOG_LEVEL: DEBUG
+      # Dev default: do not send email.
+      EMAILS_TO: ""
+    command:
+      - python
+      - -m
+      - puppyping
+      - --once
+      - --no-email
+    volumes:
+      - ./puppyping:/app/puppyping
+      - ./data/cache/dev:/app/.cache
+    restart: "no"
+
+  postgres:
+    container_name: puppyping-postgres-dev
+    ports:
+      - "5434:5432"
+
+  pgadmin:
+    container_name: puppyping-pgadmin-dev
+    ports:
+      - "5051:80"
+
+  pupswipe:
+    container_name: puppyping-pupswipe-dev
+    environment:
+      TZ: America/Chicago
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: ${PGUSER}
+      PGPASSWORD: ${PGPASSWORD}
+      PGDATABASE: ${PGDATABASE}
+    ports:
+      - "${PUPSWIPE_DEV_BIND_IP:-127.0.0.1}:${PUPSWIPE_DEV_PORT:-8001}:8000"
+    volumes:
+      - ./puppyping:/app/puppyping
+
+networks:
+  puppyping_net:
+    name: puppyping_net_dev
+
+volumes:
+  postgres_data:
+    name: puppyping_postgres_data_dev
+  pgadmin_data:
+    name: puppyping_pgadmin_data_dev

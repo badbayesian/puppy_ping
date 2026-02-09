@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from decimal import Decimal
 from html import escape
@@ -16,12 +17,21 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
-from puppyping.db import ensure_schema, get_connection
+from puppyping.db import add_email_subscriber, ensure_schema, get_connection
 
 APP_DIR = Path(__file__).resolve().parent
 DEFAULT_LIMIT = 40
 MAX_LIMIT = 200
 PAGE_SIZE = 1
+MAX_PUPPY_AGE_MONTHS = 8.0
+PUPSWIPE_SOURCE = "paws_chicago"
+PROVIDER_DISCLAIMER = (
+    "PuppyPing is not affiliated with any dog rescue, shelter, breeder, "
+    "or adoption provider."
+)
+EMAIL_PATTERN = re.compile(
+    r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$"
+)
 
 
 def _ensure_app_schema(conn) -> None:
@@ -170,12 +180,21 @@ def _fetch_puppies(limit: int, offset: int = 0) -> list[dict]:
                 )
                 SELECT *
                 FROM latest
-                WHERE COALESCE(status, '') ILIKE 'Available%%'
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM dog_status
+                    WHERE dog_status.link = latest.url
+                      AND dog_status.source = %s
+                      AND dog_status.is_active = true
+                )
+                  AND COALESCE(status, '') ILIKE 'Available%%'
+                  AND age_months IS NOT NULL
+                  AND age_months < %s
                 ORDER BY scraped_at_utc DESC, dog_id DESC
                 LIMIT %s
                 OFFSET %s;
                 """,
-                (limit, max(0, offset)),
+                (PUPSWIPE_SOURCE, MAX_PUPPY_AGE_MONTHS, limit, max(0, offset)),
             )
             rows = cur.fetchall()
             columns = [col.name for col in cur.description]
@@ -205,6 +224,8 @@ def _count_puppies() -> int:
                 WITH latest AS (
                     SELECT DISTINCT ON (dog_id)
                         dog_id,
+                        url,
+                        age_months,
                         status,
                         scraped_at_utc
                     FROM dog_profiles
@@ -212,8 +233,18 @@ def _count_puppies() -> int:
                 )
                 SELECT count(*)
                 FROM latest
-                WHERE COALESCE(status, '') ILIKE 'Available%%';
-                """
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM dog_status
+                    WHERE dog_status.link = latest.url
+                      AND dog_status.source = %s
+                      AND dog_status.is_active = true
+                )
+                  AND COALESCE(status, '') ILIKE 'Available%%'
+                  AND age_months IS NOT NULL
+                  AND age_months < %s;
+                """,
+                (PUPSWIPE_SOURCE, MAX_PUPPY_AGE_MONTHS),
             )
             row = cur.fetchone()
             return int(row[0]) if row else 0
@@ -294,6 +325,32 @@ def _safe_int(value: str | None, default: int = 0) -> int:
         return default
 
 
+def _normalize_email(email: str | None) -> str:
+    """Normalize an email address for storage and comparisons.
+
+    Args:
+        email: Raw email input.
+
+    Returns:
+        Lower-cased, trimmed email string.
+    """
+    return (email or "").strip().lower()
+
+
+def _is_valid_email(email: str) -> bool:
+    """Validate an email address with a pragmatic syntax check.
+
+    Args:
+        email: Normalized email address.
+
+    Returns:
+        ``True`` when the email looks valid, otherwise ``False``.
+    """
+    if len(email) > 320:
+        return False
+    return bool(EMAIL_PATTERN.fullmatch(email))
+
+
 def _get_primary_image(pup: dict) -> str | None:
     """Extract the primary image URL from a dog record.
 
@@ -361,7 +418,7 @@ def _render_page(
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PupSwipe</title>
+    <title>PupSwipe | PuppyPing</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -371,13 +428,13 @@ def _render_page(
           <div class="brand-mark">PS</div>
           <div>
             <h1>PupSwipe</h1>
-            <p>Server-rendered mode</p>
+            <p>By PuppyPing</p>
           </div>
         </div>
       </header>
       <main>
         <section class="stack">
-          <div class="state">Failed to load puppies: {escape(str(exc))}</div>
+          <div class="state state-error">Failed to load puppies: {escape(str(exc))}</div>
         </section>
       </main>
     </div>
@@ -393,7 +450,7 @@ def _render_page(
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PupSwipe</title>
+    <title>PupSwipe | PuppyPing</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -403,18 +460,44 @@ def _render_page(
           <div class="brand-mark">PS</div>
           <div>
             <h1>PupSwipe</h1>
-            <p>Server-rendered mode</p>
+            <p>By PuppyPing</p>
           </div>
         </div>
         <div class="stats">{escape(stats)}</div>
       </header>
       <main>
         <section class="stack">
-          <div class="state">{escape(message or "No puppies to show yet. Run scraper and refresh.")}</div>
+          <div class="state state-empty">{escape(message or "No puppies to show yet. Run scraper and refresh.")}</div>
         </section>
         <section class="controls">
           <form method="get" action="/">
             <button class="btn refresh" type="submit">Refresh</button>
+          </form>
+        </section>
+        <section class="ecosystem" aria-label="PuppyPing ecosystem">
+          <h3>Get PuppyPing Alerts</h3>
+          <p class="ecosystem-copy">
+            PupSwipe runs inside the PuppyPing ecosystem. Join the PuppyPing email list for new puppy updates.
+          </p>
+          <p class="ecosystem-copy">
+            {escape(PROVIDER_DISCLAIMER)}
+          </p>
+          <form class="subscribe-form" method="post" action="/subscribe">
+            <input type="hidden" name="offset" value="{offset}" />
+            <input type="hidden" name="photo" value="0" />
+            <label class="subscribe-label" for="subscribe-email-empty">Email for PuppyPing alerts</label>
+            <div class="subscribe-row">
+              <input
+                id="subscribe-email-empty"
+                name="email"
+                type="email"
+                inputmode="email"
+                autocomplete="email"
+                placeholder="you@example.com"
+                required
+              />
+              <button class="btn subscribe" type="submit">Join</button>
+            </div>
           </form>
         </section>
       </main>
@@ -450,11 +533,17 @@ def _render_page(
     else:
         initials = "".join(part[0] for part in name.split()[:2]).upper() or "PUP"
         image_block = f'<div class="photo-fallback">{escape(initials)}</div>'
+    current_photo_index = photo_index % photo_count if photo_count > 0 else 0
 
     carousel_controls = ""
     if photo_count > 1:
         prev_photo = (photo_index - 1) % photo_count
         next_photo = (photo_index + 1) % photo_count
+        current_index = photo_index % photo_count
+        dots = "".join(
+            f'<span class="carousel-dot{" is-active" if idx == current_index else ""}" aria-hidden="true"></span>'
+            for idx in range(photo_count)
+        )
         carousel_controls = f"""
             <div class="carousel-controls" aria-label="Photo carousel controls">
               <form method="get" action="/">
@@ -462,7 +551,10 @@ def _render_page(
                 <input type="hidden" name="photo" value="{prev_photo}" />
                 <button class="carousel-btn" type="submit" aria-label="Previous photo">Prev</button>
               </form>
-              <div class="carousel-meta">{(photo_index % photo_count) + 1} / {photo_count}</div>
+              <div class="carousel-middle">
+                <div class="carousel-meta">{current_index + 1} / {photo_count}</div>
+                <div class="carousel-dots" aria-hidden="true">{dots}</div>
+              </div>
               <form method="get" action="/">
                 <input type="hidden" name="offset" value="{offset}" />
                 <input type="hidden" name="photo" value="{next_photo}" />
@@ -471,13 +563,13 @@ def _render_page(
             </div>
         """
 
-    info_msg = f'<div class="stats" style="margin: 0 auto 12px;">{escape(message)}</div>' if message else ""
+    info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
     page_html = f"""<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PupSwipe</title>
+    <title>PupSwipe | PuppyPing</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -493,7 +585,7 @@ def _render_page(
           <div class="brand-mark">PS</div>
           <div>
             <h1>PupSwipe</h1>
-            <p>Python server-rendered mode</p>
+            <p>By PuppyPing</p>
           </div>
         </div>
         <div class="stats">{escape(stats)}</div>
@@ -512,9 +604,13 @@ def _render_page(
             <div class="card-body">
               <div class="card-title">
                 <h2>{name}</h2>
-                <span>{age_raw}</span>
+                <span class="age-pill">{age_raw}</span>
               </div>
-              <div class="card-subtitle">{breed} - {gender} - {location}</div>
+              <div class="card-facts">
+                <span>{breed}</span>
+                <span>{gender}</span>
+                <span>{location}</span>
+              </div>
               <div class="badges">
                 <span class="badge">{status}</span>
               </div>
@@ -542,6 +638,33 @@ def _render_page(
           </form>
         </section>
       </main>
+
+      <section class="ecosystem" aria-label="PuppyPing ecosystem">
+        <h3>Get PuppyPing Alerts</h3>
+        <p class="ecosystem-copy">
+          PupSwipe is part of the PuppyPing ecosystem. Join PuppyPing email alerts to get fresh puppy updates.
+        </p>
+        <p class="ecosystem-copy">
+          {escape(PROVIDER_DISCLAIMER)}
+        </p>
+        <form class="subscribe-form" method="post" action="/subscribe">
+          <input type="hidden" name="offset" value="{offset}" />
+          <input type="hidden" name="photo" value="{current_photo_index}" />
+          <label class="subscribe-label" for="subscribe-email">Email for PuppyPing alerts</label>
+          <div class="subscribe-row">
+            <input
+              id="subscribe-email"
+              name="email"
+              type="email"
+              inputmode="email"
+              autocomplete="email"
+              placeholder="you@example.com"
+              required
+            />
+            <button class="btn subscribe" type="submit">Join</button>
+          </div>
+        </form>
+      </section>
 
       <footer class="footer">
         <a class="profile-link" href="{profile_url}" target="_blank" rel="noopener">Open profile</a>
@@ -745,12 +868,51 @@ class AppHandler(SimpleHTTPRequestHandler):
         return super().do_GET()
 
     def do_POST(self):
-        """Handle POST requests for swipe submissions and swipe API writes.
+        """Handle POST requests for subscriptions, swipes, and API writes.
 
         Returns:
             None.
         """
         parsed = urlparse(self.path)
+        if parsed.path == "/subscribe":
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length).decode("utf-8") if length else ""
+            form = parse_qs(body)
+
+            offset = _safe_int(form.get("offset", ["0"])[0], 0)
+            photo_index = _safe_int(form.get("photo", ["0"])[0], 0)
+            email = _normalize_email(form.get("email", [""])[0])
+
+            query_params = {"offset": str(offset), "photo": str(photo_index)}
+            if not _is_valid_email(email):
+                query_params["msg"] = "Enter a valid email address."
+                query = urlencode(query_params)
+                self.send_response(303)
+                self.send_header("Location", f"/?{query}")
+                self.end_headers()
+                return
+
+            try:
+                created = add_email_subscriber(email, source="pupswipe")
+            except Exception as exc:
+                query_params["msg"] = f"Failed to save subscription: {exc}"
+                query = urlencode(query_params)
+                self.send_response(303)
+                self.send_header("Location", f"/?{query}")
+                self.end_headers()
+                return
+
+            query_params["msg"] = (
+                "Subscribed to PuppyPing email updates."
+                if created
+                else "Email is already subscribed."
+            )
+            query = urlencode(query_params)
+            self.send_response(303)
+            self.send_header("Location", f"/?{query}")
+            self.end_headers()
+            return
+
         if parsed.path == "/swipe":
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(length).decode("utf-8") if length else ""

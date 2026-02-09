@@ -7,12 +7,12 @@ from .wrightway import fetch_adoptable_dog_profile_links_wrightway, fetch_dog_pr
 from ..models import DogProfile
 
 
-FETCH_LINKS: dict[str, Callable[[], set[str]]] = {
+FETCH_LINKS: dict[str, Callable[[bool], set[str]]] = {
     "paws_chicago": fetch_adoptable_dog_profile_links_paws,
     "wright_way": fetch_adoptable_dog_profile_links_wrightway,
 }
 
-FETCH_PROFILE: dict[str, Callable[[str], object]] = {
+FETCH_PROFILE: dict[str, Callable[[str], DogProfile]] = {
     "paws_chicago": fetch_dog_profile_paws,
     "wright_way": fetch_dog_profile_wrightway,
 }

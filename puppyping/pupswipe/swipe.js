@@ -6,7 +6,7 @@
     return;
   }
 
-  const previewThreshold = 24;
+  const previewThreshold = 22;
   const swipeThreshold = Number(card.dataset.swipeThreshold || 110);
   let pointerState = null;
   let horizontalDrag = false;
@@ -19,6 +19,8 @@
   function resetVisual() {
     card.style.transform = "translateX(0px) rotate(0deg)";
     card.style.opacity = "1";
+    card.style.filter = "none";
+    card.style.willChange = "auto";
     card.classList.remove("is-dragging", "show-like", "show-nope");
   }
 
@@ -30,9 +32,10 @@
     card.classList.remove("is-dragging");
     card.classList.toggle("show-like", direction === "right");
     card.classList.toggle("show-nope", direction === "left");
-    card.style.transition = "transform 0.16s ease, opacity 0.16s ease";
-    card.style.transform = `translateX(${offscreenX}px) rotate(${rotate}deg)`;
+    card.style.transition = "transform 0.18s cubic-bezier(.2,.7,.2,1), opacity 0.18s ease";
+    card.style.transform = `translateX(${offscreenX}px) translateY(-10px) rotate(${rotate}deg)`;
     card.style.opacity = "0.22";
+    card.style.filter = "saturate(1.15)";
 
     window.setTimeout(() => {
       form.submit();
@@ -40,7 +43,12 @@
   }
 
   function shouldIgnoreTarget(target) {
-    return Boolean(target && target.closest("button, a, input, textarea, select, form"));
+    return Boolean(
+      target &&
+        target.closest(
+          ".card-body, button, a, input, textarea, select, form"
+        )
+    );
   }
 
   card.addEventListener("pointerdown", (ev) => {
@@ -58,6 +66,7 @@
     horizontalDrag = false;
     card.classList.add("is-dragging");
     card.style.transition = "none";
+    card.style.willChange = "transform, opacity, filter";
     if (typeof card.setPointerCapture === "function") {
       card.setPointerCapture(ev.pointerId);
     }
@@ -82,8 +91,11 @@
     }
 
     const rotate = Math.max(-16, Math.min(16, dx * 0.05));
-    card.style.transform = `translateX(${dx}px) rotate(${rotate}deg)`;
+    const lift = Math.min(14, Math.abs(dx) * 0.06);
+    const saturation = 1 + Math.min(0.22, Math.abs(dx) / 520);
+    card.style.transform = `translateX(${dx}px) translateY(${-lift}px) rotate(${rotate}deg)`;
     card.style.opacity = "1";
+    card.style.filter = `saturate(${saturation})`;
     setPreview(dx);
   });
 
@@ -94,6 +106,7 @@
     const dx = ev.clientX - pointerState.startX;
     const dy = ev.clientY - pointerState.startY;
     pointerState = null;
+    horizontalDrag = false;
 
     if (typeof card.releasePointerCapture === "function") {
       try {
@@ -108,7 +121,7 @@
       return;
     }
 
-    card.style.transition = "transform 0.16s ease, opacity 0.16s ease";
+    card.style.transition = "transform 0.16s ease, opacity 0.16s ease, filter 0.16s ease";
     resetVisual();
   }
 
