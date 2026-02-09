@@ -53,11 +53,27 @@ flowchart LR
 ### Compose Layering
 
 ```mermaid
-flowchart TD
-  A[compose.yml\nProduction baseline] --> B[Prod Stack]
-  A --> C[compose.dev.yml\nDev overrides]
-  C --> D[Dev Stack]
+flowchart LR
+  B[compose.yml\nbase services/config]
+  O[compose.dev.yml\ndev overrides]
+  EP[.env]
+  ED[.env.dev]
+
+  B --> CP[docker compose\n--env-file .env\n-f compose.yml]
+  EP --> CP
+  CP --> P[Prod stack]
+
+  B --> CD[docker compose\n--env-file .env.dev\n-f compose.yml\n-f compose.dev.yml]
+  O --> CD
+  ED --> CD
+  CD --> D[Dev stack]
 ```
+
+Compose layering rules:
+
+- Compose processes files in order; later files override earlier files for the same keys.
+- Production uses only `compose.yml`.
+- Development uses `compose.yml` as base plus `compose.dev.yml` overrides.
 
 ## Architecture Notes
 
