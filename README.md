@@ -2,6 +2,8 @@
 
 PuppyPing scrapes adoptable puppy profiles, stores them in Postgres, and serves a swipe UI (`PupSwipe`) for browsing and recording likes/nope actions.
 
+This repo is a combination of coding + vibe coding.
+
 Current behavior:
 - Scraper sources: `paws_chicago` and `wright_way`
 - PupSwipe feed: currently filtered to `paws_chicago` only
@@ -53,20 +55,26 @@ flowchart LR
 ### Compose Layering
 
 ```mermaid
-flowchart LR
-  B[compose.yml\nbase services/config]
-  O[compose.dev.yml\ndev overrides]
-  EP[.env]
-  ED[.env.dev]
+flowchart TB
+  subgraph Prod
+    PB[compose.yml]
+    PE[.env]
+    PS[Prod stack]
+    PB --> PS
+    PE --> PS
+  end
 
-  B --> CP[docker compose\n--env-file .env\n-f compose.yml]
-  EP --> CP
-  CP --> P[Prod stack]
-
-  B --> CD[docker compose\n--env-file .env.dev\n-f compose.yml\n-f compose.dev.yml]
-  O --> CD
-  ED --> CD
-  CD --> D[Dev stack]
+  subgraph Dev
+    DB[compose.yml]
+    DO[compose.dev.yml]
+    DE[.env.dev]
+    DM[Layered config]
+    DS[Dev stack]
+    DB --> DM
+    DO --> DM
+    DM --> DS
+    DE --> DS
+  end
 ```
 
 Compose layering rules:
