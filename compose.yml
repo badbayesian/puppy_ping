@@ -3,7 +3,7 @@ services:
     build:
       context: . #https://github.com/badbayesian/puppy_ping.git
       dockerfile: Dockerfile
-    container_name: puppyping
+    container_name: puppyping-scraper
     environment:
       TZ: America/Chicago
 
@@ -40,8 +40,7 @@ services:
       # CRITICAL: force writable, standard data directory
       PGDATA: /var/lib/postgresql/data
     volumes:
-      # CRITICAL: mount to /var/lib/postgresql/data ONLY
-      - /mnt/thebutler/config/puppy_ping/data/postgres:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     ports:
       - "5433:5432"
     restart: unless-stopped
@@ -58,10 +57,11 @@ services:
       PGADMIN_REPLACE_SERVERS_ON_STARTUP: "True"
     ports:
       - "5050:80"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
-      - /mnt/thebutler/config/puppy_ping/data/pgadmin:/var/lib/pgadmin
-      # MUST be a host-absolute path when running from code-server
-      - /mnt/thebutler/media/repos/puppy_ping/docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
+      - pgadmin_data:/var/lib/pgadmin
+      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
     depends_on:
       - postgres
     restart: unless-stopped
@@ -72,7 +72,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: puppyping-app
+    container_name: puppyping-pupswipe
     environment:
       TZ: America/Chicago
       PGHOST: ${PGHOST}
@@ -87,14 +87,32 @@ services:
       - --host
       - 0.0.0.0
       - --port
-      - "8000"
+      - "${PUPSWIPE_PORT:-8000}"
     ports:
-      - 8000:8000
+      - "${PUPSWIPE_BIND_IP:-10.0.0.247}:${PUPSWIPE_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     depends_on:
       - postgres
-    restart: no
+    restart: unless-stopped
+    networks:
+      - puppyping_net
 
 
 networks:
   puppyping_net:
     name: puppyping_net
+
+volumes:
+  postgres_data:
+    name: puppyping_postgres_data
+  pgadmin_data:
+    name: puppyping_pgadmin_data

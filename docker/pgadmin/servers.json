@@ -3,8 +3,8 @@
     "1": {
       "Name": "puppyping-postgres",
       "Group": "Puppy Ping",
-      "Host": "postgres",
-      "Port": 5432,
+      "Host": "host.docker.internal",
+      "Port": 5433,
       "MaintenanceDB": "puppyping",
       "Username": "puppyping",
       "ConnectionParameters": {

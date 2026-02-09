@@ -162,11 +162,11 @@ main {
   display: flex;
   flex-direction: column;
   transition: transform 0.25s ease, opacity 0.25s ease;
-  touch-action: none;
+  touch-action: pan-y;
+  user-select: none;
 }
 
 .card.is-dragging {
-  transition: none;
   cursor: grabbing;
 }
 
@@ -192,10 +192,48 @@ main {
   color: rgba(29, 27, 25, 0.75);
 }
 
+.swipe-indicator {
+  position: absolute;
+  top: 16px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 2px solid currentColor;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.swipe-indicator.like {
+  left: 16px;
+  color: #0f5f4b;
+}
+
+.swipe-indicator.nope {
+  right: 16px;
+  color: #b33c27;
+}
+
+.card.show-like .swipe-indicator.like {
+  opacity: 1;
+}
+
+.card.show-nope .swipe-indicator.nope {
+  opacity: 1;
+}
+
 .card-body {
   padding: 20px 22px 24px;
   display: grid;
   gap: 12px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .card-title {
@@ -244,49 +282,54 @@ main {
   margin: 0;
   color: #2d2926;
   line-height: 1.4;
-  max-height: 96px;
-  overflow: hidden;
+  max-height: none;
+  overflow: visible;
 }
 
-.stamp {
-  position: absolute;
-  top: 24px;
+.carousel-controls {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.carousel-controls form {
+  margin: 0;
+}
+
+.carousel-btn {
+  border: none;
+  border-radius: 999px;
   padding: 8px 14px;
-  border: 2px solid currentColor;
+  cursor: pointer;
+  font-size: 0.82rem;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.03em;
   text-transform: uppercase;
-  border-radius: 12px;
-  opacity: 0;
-  transform: rotate(-12deg) scale(0.9);
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  background: rgba(29, 27, 25, 0.08);
+  color: var(--ink);
 }
 
-.stamp.like {
-  left: 22px;
-  color: var(--accent-2);
+.carousel-btn:hover {
+  background: rgba(29, 27, 25, 0.14);
 }
 
-.stamp.nope {
-  right: 22px;
-  color: var(--accent);
-  transform: rotate(12deg) scale(0.9);
-}
-
-.card.show-like .stamp.like,
-.card.show-nope .stamp.nope {
-  opacity: 1;
-  transform: rotate(-12deg) scale(1);
-}
-
-.card.show-nope .stamp.nope {
-  transform: rotate(12deg) scale(1);
+.carousel-meta {
+  text-align: center;
+  font-size: 0.86rem;
+  color: var(--muted);
+  font-weight: 600;
 }
 
 .controls {
   display: flex;
   justify-content: center;
   gap: 16px;
+}
+
+.controls form {
+  margin: 0;
 }
 
 .btn {
