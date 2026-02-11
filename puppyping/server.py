@@ -156,7 +156,10 @@ def main() -> None:
     send_ping = not args.no_email
     
 
-    run(send_ping=send_ping, store_in_db=store_in_db)
+    try:
+        run(send_ping=send_ping, store_in_db=store_in_db)
+    except Exception as exc:
+        logger.exception(f"Failed to complete initial run: {exc}")
 
     if args.once:
         return

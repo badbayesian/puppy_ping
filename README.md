@@ -143,6 +143,34 @@ python -m pip install -e .[dev]
 python -m pytest
 ```
 
+## Daily Postgres Backup
+
+Backup script (checked into this repo):
+
+- `scripts/backup_postgres.sh`
+
+It creates compressed logical dumps under:
+
+- `/mnt/thebutler/data/puppyping/postgres/backups`
+
+Install on server:
+
+```bash
+sudo install -m 700 scripts/backup_postgres.sh /usr/local/bin/puppyping_pg_backup.sh
+```
+
+Run once manually:
+
+```bash
+/usr/local/bin/puppyping_pg_backup.sh
+```
+
+Schedule daily backup at 1:30 AM with 30-day retention:
+
+```bash
+(crontab -l 2>/dev/null; echo '30 1 * * * /usr/local/bin/puppyping_pg_backup.sh >> /var/log/puppyping_pg_backup.log 2>&1') | crontab -
+```
+
 ## PupSwipe API
 
 - `GET /api/puppies?limit=40` returns current feed items.
