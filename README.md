@@ -86,6 +86,7 @@ Compose layering rules:
 ## Architecture Notes
 
 - `puppyping-scraper` orchestrates scrape runs, status updates, profile storage, and email dispatch.
+- Scraper schedule: runs once at container start, then once daily at `1:00 PM` local container time (`TZ`), and catches up promptly after host sleep/resume.
 - `puppyping-pupswipe` serves the web UI and API, and records swipe events and subscriptions.
 - `puppyping-postgres` is the shared system of record for scraped profiles, link status, swipes, and subscribers.
 - `puppyping-pgadmin` is an admin UI for inspecting and managing the Postgres database.

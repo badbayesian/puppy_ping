@@ -1,7 +1,7 @@
 import argparse
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import logging
 from typing import Optional
 
@@ -16,6 +16,9 @@ from tqdm import tqdm
 logger = logging.getLogger(__name__)
 
 SOURCES = ("paws_chicago", "wright_way")
+DAILY_RUN_HOUR = 13
+DAILY_RUN_MINUTE = 0
+SCHEDULER_POLL_SECONDS = 30
 
 
 def __safe_less_than(a: Optional[float], b: float | int) -> bool:
@@ -76,6 +79,46 @@ def run(
         )
 
 
+def _daily_run_time(now: datetime) -> datetime:
+    """Return today's scheduled daily run timestamp in local time."""
+    return now.replace(
+        hour=DAILY_RUN_HOUR,
+        minute=DAILY_RUN_MINUTE,
+        second=0,
+        microsecond=0,
+    )
+
+
+def _startup_daily_run_marker(now: datetime) -> date | None:
+    """Mark startup run as today's daily run when startup is after 1:00 PM."""
+    if now >= _daily_run_time(now):
+        return now.date()
+    return None
+
+
+def _should_run_daily(now: datetime, last_daily_run_date: date | None) -> bool:
+    """Return True when today's 1:00 PM run is due."""
+    return now >= _daily_run_time(now) and last_daily_run_date != now.date()
+
+
+def _sleep_seconds(now: datetime, last_daily_run_date: date | None) -> float:
+    """Return a bounded scheduler sleep duration.
+
+    This avoids a single long sleep so suspend/resume does not defer the run
+    for hours after wake.
+    """
+    if _should_run_daily(now, last_daily_run_date):
+        return 0.0
+
+    today_run = _daily_run_time(now)
+    if now < today_run and last_daily_run_date != now.date():
+        remaining = (today_run - now).total_seconds()
+    else:
+        remaining = ((today_run + timedelta(days=1)) - now).total_seconds()
+
+    return max(1.0, min(float(SCHEDULER_POLL_SECONDS), remaining))
+
+
 def main() -> None:
     """CLI entrypoint for scraping and optional email output."""
     log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -118,19 +161,24 @@ def main() -> None:
     if args.once:
         return
 
+    # If startup completes after 1:00 PM, treat that startup run as today's
+    # daily run and wait until tomorrow's 1:00 PM window.
+    last_daily_run_date = _startup_daily_run_marker(datetime.now().astimezone())
+
     while True:
         now = datetime.now().astimezone()
-        next_run = now.replace(hour=13, minute=0, second=0, microsecond=0)
-        if now >= next_run:
-            next_run = next_run + timedelta(days=1)
 
-        sleep_for = (next_run - now).total_seconds()
-        time.sleep(max(0, sleep_for))
+        if not _should_run_daily(now, last_daily_run_date):
+            time.sleep(_sleep_seconds(now, last_daily_run_date))
+            continue
 
         try:
             run(send_ping=send_ping, store_in_db=store_in_db)
         except Exception as exc:
             print(f"Run failed: {exc}")
+        finally:
+            # Prevent retries every poll interval after a failed daily run.
+            last_daily_run_date = now.date()
 
 
 if __name__ == "__main__":
