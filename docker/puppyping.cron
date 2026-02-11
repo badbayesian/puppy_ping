@@ -1,0 +1,6 @@
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+CRON_TZ=America/Chicago
+
+@reboot root /app/docker/run_scrape_cron.sh >> /proc/1/fd/1 2>> /proc/1/fd/2
+0 13 * * * root /app/docker/run_scrape_cron.sh >> /proc/1/fd/1 2>> /proc/1/fd/2

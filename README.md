@@ -86,7 +86,7 @@ Compose layering rules:
 ## Architecture Notes
 
 - `puppyping-scraper` orchestrates scrape runs, status updates, profile storage, and email dispatch.
-- Scraper schedule: runs once at container start, then once daily at `1:00 PM` local container time (`TZ`), and catches up promptly after host sleep/resume.
+- Scraper runtime: container runs cron in foreground and schedules scrape jobs at container start and daily at `1:00 PM` (`America/Chicago`).
 - `puppyping-pupswipe` serves the web UI and API, and records swipe events and subscriptions.
 - `puppyping-postgres` is the shared system of record for scraped profiles, link status, swipes, and subscribers.
 - `puppyping-pgadmin` is an admin UI for inspecting and managing the Postgres database.
@@ -141,6 +141,28 @@ Run tests:
 ```powershell
 python -m pip install -e .[dev]
 python -m pytest
+```
+
+## Scraper Scheduling (Server)
+
+Production scheduling is internal to the `puppyping` container via cron:
+
+- cron file: `docker/puppyping.cron`
+- run target: `docker/run_scrape_cron.sh`
+- schedule:
+  - `@reboot` (runs when container starts)
+  - `0 13 * * *` (`1:00 PM`, `America/Chicago`)
+
+Inspect cron-driven scraper logs:
+
+```bash
+docker logs puppyping-scraper
+```
+
+Force an immediate manual run inside the running scraper container:
+
+```bash
+docker exec puppyping-scraper /app/docker/run_scrape_cron.sh
 ```
 
 ## Daily Postgres Backup
@@ -203,9 +225,11 @@ PupSwipe displays a disclaimer that PuppyPing is not affiliated with any rescue,
 
 ## Project Structure
 
-- `puppyping/server.py`: scraper scheduling + persistence + email dispatch.
+- `puppyping/server.py`: single scrape cycle + persistence + email dispatch.
 - `puppyping/providers/`: source-specific scraping logic.
 - `puppyping/db.py`: Postgres schema and DB operations.
 - `puppyping/pupswipe/server.py`: PupSwipe web server + API.
 - `puppyping/models.py`: core dataclasses.
+- `docker/puppyping.cron`: production cron schedule for scraper runs.
+- `docker/run_scrape_cron.sh`: cron task runner that executes one scrape cycle.
 - `tests/`: pytest suite.

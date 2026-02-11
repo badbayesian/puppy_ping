@@ -24,7 +24,7 @@ services:
       - /mnt/thebutler/config/puppy_ping/cache:/app/.cache
     depends_on:
       - postgres
-    restart: "no"
+    restart: unless-stopped
     networks:
       - puppyping_net
 
