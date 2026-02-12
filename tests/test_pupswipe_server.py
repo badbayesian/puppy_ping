@@ -176,3 +176,61 @@ def test_render_page_has_uniform_card_structure_for_wright_way(monkeypatch):
     assert "A sweet lab mix puppy from Mississippi." in html
     assert "Provider link" in html
     assert "View on Wright-Way Rescue" in html
+
+
+def test_render_page_shows_random_button(monkeypatch):
+    monkeypatch.setattr(pupswipe, "_count_puppies", lambda: 1)
+    monkeypatch.setattr(
+        pupswipe,
+        "_fetch_puppies",
+        lambda limit, offset=0: [
+            {
+                "dog_id": 3,
+                "url": "https://example.com/dog/3",
+                "name": "Ranger",
+                "breed": "Mix",
+                "gender": "Male",
+                "age_raw": "4 months",
+                "location": "Chicago, IL",
+                "status": "Available",
+                "description": "Ready for a home.",
+                "media": {"images": ["https://example.com/photo.jpg"]},
+                "source": "paws_chicago",
+            }
+        ],
+    )
+
+    html = pupswipe._render_page(offset=0).decode("utf-8")
+    assert ">Random</button>" in html
+    assert 'name="random" value="1"' in html
+
+
+def test_render_page_randomize_uses_random_offset(monkeypatch):
+    monkeypatch.setattr(pupswipe, "_count_puppies", lambda: 5)
+    monkeypatch.setattr(pupswipe.random, "randrange", lambda n: 1)
+
+    captured = {}
+
+    def fake_fetch(limit, offset=0):
+        captured["offset"] = offset
+        return [
+            {
+                "dog_id": 4,
+                "url": "https://example.com/dog/4",
+                "name": "Nova",
+                "breed": "Mix",
+                "gender": "Female",
+                "age_raw": "5 months",
+                "location": "Chicago, IL",
+                "status": "Available",
+                "description": "Happy puppy.",
+                "media": {"images": ["https://example.com/photo2.jpg"]},
+                "source": "wright_way",
+            }
+        ]
+
+    monkeypatch.setattr(pupswipe, "_fetch_puppies", fake_fetch)
+    pupswipe._render_page(offset=1, randomize=True)
+
+    # random.randrange(total - 1) -> 1, then offset shifts to avoid current offset 1.
+    assert captured["offset"] == 2

@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import os
+import random
 import re
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -436,7 +437,10 @@ def _get_photo_urls(pup: dict) -> list[str]:
 
 
 def _render_page(
-    offset: int = 0, message: str | None = None, photo_index: int = 0
+    offset: int = 0,
+    message: str | None = None,
+    photo_index: int = 0,
+    randomize: bool = False,
 ) -> bytes:
     """Render the main HTML page.
 
@@ -451,6 +455,14 @@ def _render_page(
     try:
         total = _count_puppies()
         if total > 0 and offset >= total:
+            offset = 0
+        if total > 1 and randomize:
+            current_offset = offset
+            random_offset = random.randrange(total - 1)
+            if random_offset >= current_offset:
+                random_offset += 1
+            offset = random_offset
+        elif total == 1 and randomize:
             offset = 0
         puppies = _fetch_puppies(PAGE_SIZE, offset=offset)
     except Exception as exc:
@@ -512,7 +524,9 @@ def _render_page(
         </section>
         <section class="controls">
           <form method="get" action="/">
-            <button class="btn refresh" type="submit">Refresh</button>
+            <input type="hidden" name="offset" value="{offset}" />
+            <input type="hidden" name="random" value="1" />
+            <button class="btn refresh" type="submit">Random</button>
           </form>
         </section>
         <section class="ecosystem" aria-label="PuppyPing ecosystem">
@@ -690,7 +704,9 @@ def _render_page(
             <button class="btn nope" type="submit">Nope</button>
           </form>
           <form method="get" action="/">
-            <button class="btn refresh" type="submit">Refresh</button>
+            <input type="hidden" name="offset" value="{offset}" />
+            <input type="hidden" name="random" value="1" />
+            <button class="btn refresh" type="submit">Random</button>
           </form>
           <form id="swipe-like-form" method="post" action="/swipe">
             <input type="hidden" name="dog_id" value="{dog_id}" />
@@ -918,8 +934,19 @@ class AppHandler(SimpleHTTPRequestHandler):
             query = parse_qs(parsed.query)
             offset = _safe_int(query.get("offset", ["0"])[0], 0)
             photo_index = _safe_int(query.get("photo", ["0"])[0], 0)
+            randomize = query.get("random", ["0"])[0].strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
             msg = query.get("msg", [None])[0]
-            body = _render_page(offset=offset, message=msg, photo_index=photo_index)
+            body = _render_page(
+                offset=offset,
+                message=msg,
+                photo_index=photo_index,
+                randomize=randomize,
+            )
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
