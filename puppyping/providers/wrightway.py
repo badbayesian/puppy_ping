@@ -11,11 +11,11 @@ from bs4 import BeautifulSoup
 from diskcache import Cache
 
 try:
-    from .scrape_helpers import _clean, _extract_query_id, _get_soup
+    from .scrape_helpers import _clean, _extract_query_id, _get_soup, _parse_weight_lbs
     from ..db import get_cached_links, store_cached_links
     from ..models import DogMedia, DogProfile
 except ImportError:  # Allows running as a script
-    from scrape_helpers import _clean, _extract_query_id, _get_soup
+    from scrape_helpers import _clean, _extract_query_id, _get_soup, _parse_weight_lbs
     from db import get_cached_links, store_cached_links
     from models import DogMedia, DogProfile
 
@@ -27,7 +27,11 @@ START_URL = "https://wright-wayrescue.org/adoptable-pets"
 CACHE_TIME = 24 * 60 * 60  # 24 hours
 
 PROFILE_PATH_RE = re.compile(r"wsAdoptableAnimalDetails\.aspx", re.IGNORECASE)
-LABELS = ("Animal ID", "Breed", "Gender", "Age", "Location", "Stage")
+LABELS = ("Animal ID", "Breed", "Gender", "Age", "Weight", "Location", "Stage")
+DESCRIPTION_STOP_MARKERS = (
+    "THANK YOU FOR YOUR INTEREST IN SAVING A LIFE!",
+    "THERE ARE TWO WAYS TO ADOPT FROM WRIGHT-WAY RESCUE:",
+)
 
 cache = Cache("./data/cache/wright_way")
 
@@ -88,12 +92,67 @@ def _extract_description(soup: BeautifulSoup) -> Optional[str]:
     Returns:
         Profile description or None.
     """
-    blocks = [
-        _clean(el.get_text(" ", strip=True))
-        for el in soup.select("p, div")
-        if len(_clean(el.get_text(" ", strip=True))) >= 120
-    ]
-    return blocks[0] if blocks else None
+    def _trim_tail(text: str) -> str:
+        cleaned = _clean(text)
+        lowered = cleaned.lower()
+        cut_idx = len(cleaned)
+        for marker in DESCRIPTION_STOP_MARKERS:
+            idx = lowered.find(marker.lower())
+            if idx != -1:
+                cut_idx = min(cut_idx, idx)
+        return cleaned[:cut_idx].strip()
+
+    selectors = (
+        "#lbDescription",
+        "#tblDescription",
+        ".detail-animal-desc",
+        "#DescriptionWrapper",
+    )
+    candidates = []
+    for selector in selectors:
+        node = soup.select_one(selector)
+        if node:
+            candidates.append(node.get_text(" ", strip=True))
+
+    meta_description = soup.find("meta", attrs={"property": "og:description"})
+    if meta_description and meta_description.get("content"):
+        candidates.append(str(meta_description["content"]))
+
+    for candidate in candidates:
+        text = _trim_tail(candidate)
+        if len(text) >= 60:
+            return text
+
+    # Fallback for unexpected markup.
+    for node in soup.select("p, div"):
+        text = _clean(node.get_text(" ", strip=True))
+        if len(text) < 120:
+            continue
+        if "click a number to change picture or play to see a video" in text.lower():
+            continue
+        text = _trim_tail(text)
+        if len(text) >= 60:
+            return text
+    return None
+
+
+def _clean_name(candidate: str) -> Optional[str]:
+    """Normalize a candidate name string and discard obvious non-name content."""
+    value = _clean(candidate.split("|", 1)[0])
+    value = re.sub(r"^meet\s+", "", value, flags=re.IGNORECASE).strip(" :-")
+    if not value:
+        return None
+    if value.lower().startswith("animal details"):
+        return None
+    if len(value) > 60:
+        return None
+    if re.search(
+        r"click a number|animal id|species|breed|gender|age|location|stage",
+        value,
+        flags=re.IGNORECASE,
+    ):
+        return None
+    return value
 
 
 def _extract_name(soup: BeautifulSoup, description: Optional[str]) -> Optional[str]:
@@ -106,23 +165,30 @@ def _extract_name(soup: BeautifulSoup, description: Optional[str]) -> Optional[s
     Returns:
         Name text or None.
     """
+    meta_title = soup.find("meta", attrs={"property": "og:title"})
+    if meta_title and meta_title.get("content"):
+        name = _clean_name(str(meta_title["content"]))
+        if name:
+            return name
+
     for selector in ("h1", ".petName", ".pet-name", "title"):
         node = soup.select_one(selector)
         if not node:
             continue
-        candidate = _clean(node.get_text(" ", strip=True).split("|", 1)[0])
-        if candidate:
-            return candidate
+        name = _clean_name(node.get_text(" ", strip=True))
+        if name:
+            return name
 
     if description:
-        cleaned = _clean(
-            description.replace(
-                "Click a number to change picture or play to see a video", ""
-            )
+        match = re.search(
+            r"\bMeet\s+([A-Za-z][A-Za-z' -]{0,40})\b",
+            description,
+            flags=re.IGNORECASE,
         )
-        match = re.search(r"\bMeet\s+(.+?)(?:[.!-]|$)", cleaned, flags=re.IGNORECASE)
         if match:
-            return _clean(match.group(1))
+            name = _clean_name(match.group(1))
+            if name:
+                return name
     return None
 
 
@@ -142,14 +208,20 @@ def _extract_label_values(soup: BeautifulSoup) -> dict[str, str]:
         if len(tds) >= 2:
             key = _clean(tds[0].get_text()).rstrip(":")
             val = _clean(tds[1].get_text())
-            if key and val:
+            if key in LABELS and val:
                 data[key] = val
 
-    text = soup.get_text("\n", strip=True)
+    lines = [_clean(line) for line in soup.get_text("\n").splitlines()]
+    lines = [line for line in lines if line]
+    for idx, line in enumerate(lines[:-1]):
+        if line in LABELS and line not in data:
+            data[line] = lines[idx + 1]
+
+    text = "\n".join(lines)
     for label in LABELS:
         if label in data:
             continue
-        match = re.search(rf"{re.escape(label)}\s*:\s*(.+)", text)
+        match = re.search(rf"{re.escape(label)}\s*:?\s*(.+)", text)
         if match:
             data[label] = _clean(match.group(1).split("\n")[0])
 
@@ -193,12 +265,54 @@ def _extract_media(soup: BeautifulSoup, page_url: str) -> DogMedia:
     Returns:
         Extracted media bundle.
     """
-    images = {urljoin(page_url, img["src"]) for img in soup.select("img[src]")}
+    def _is_petango_photo(url: str) -> bool:
+        return "g.petango.com/photos/" in url.lower()
+
+    def _canonical_petango_photo(url: str) -> str:
+        normalized = url.strip()
+        normalized = normalized.replace("https:http://", "https://")
+        normalized = normalized.replace("https:https://", "https://")
+        normalized = re.sub(r"^http://g\.petango\.com/", "https://g.petango.com/", normalized)
+        return normalized
+
+    images = set()
+    for img in soup.select("img[src]"):
+        src = _canonical_petango_photo(urljoin(page_url, img["src"]))
+        if _is_petango_photo(src):
+            images.add(src)
+
+    # Petango often exposes all photos via numbered links [1], [2], [3].
+    for a in soup.select("a[href]"):
+        href = _canonical_petango_photo(urljoin(page_url, a["href"]))
+        onclick = a.get("onclick") or ""
+        if _is_petango_photo(href):
+            images.add(href)
+        photo_match = re.search(r"loadPhoto\('([^']+)'\)", onclick)
+        if photo_match:
+            photo_url = _canonical_petango_photo(urljoin(page_url, photo_match.group(1)))
+            if _is_petango_photo(photo_url):
+                images.add(photo_url)
+
     videos = {
         urljoin(page_url, tag["src"])
         for tag in soup.select("video[src], video source[src]")
     }
     embeds = {urljoin(page_url, frame["src"]) for frame in soup.select("iframe[src]")}
+
+    for tag in soup.select("[onclick]"):
+        onclick = tag.get("onclick") or ""
+        video_match = re.search(r"loadVideo\('([^']+)'\)", onclick)
+        if video_match:
+            video_id = video_match.group(1).strip()
+            if video_id:
+                embeds.add(urljoin(page_url, f"wsYouTubeVideo.aspx?videoid={video_id}"))
+
+    meta_image = soup.find("meta", attrs={"property": "og:image"})
+    if meta_image and meta_image.get("content"):
+        image_url = _canonical_petango_photo(urljoin(page_url, str(meta_image["content"])))
+        if _is_petango_photo(image_url):
+            images.add(image_url)
+
     return DogMedia(images=sorted(images), videos=sorted(videos), embeds=sorted(embeds))
 
 
@@ -298,7 +412,7 @@ def fetch_dog_profile_wrightway(url: str) -> DogProfile:
         gender=labels.get("Gender"),
         age_raw=age_raw,
         age_months=_parse_age_months(age_raw),
-        weight_lbs=None,
+        weight_lbs=_parse_weight_lbs(labels.get("Weight")),
         location=labels.get("Location"),
         status=labels.get("Stage"),
         ratings={},

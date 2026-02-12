@@ -41,11 +41,18 @@ def run(
     if store_in_db:
         for source, urls in links_by_source.items():
             store_dog_status(source, list(urls), logger=logger)
-    profiles = [
-        fetch_dog_profile(source, url)
-        for source, urls in links_by_source.items()
-        for url in tqdm(urls, desc=f"Fetching profiles for {source}")
-    ]
+    profiles = []
+    failed_profiles = 0
+    for source, urls in links_by_source.items():
+        for url in tqdm(urls, desc=f"Fetching profiles for {source}"):
+            try:
+                profiles.append(fetch_dog_profile(source, url))
+            except Exception as exc:
+                failed_profiles += 1
+                logger.warning(f"Skipping profile due to fetch error for {url}: {exc}")
+
+    if failed_profiles:
+        logger.warning(f"Skipped {failed_profiles} profile(s) due to fetch errors.")
 
     filtered_profiles = [p for p in profiles if __safe_less_than(p.age_months, max_age)]
     if store_in_db:

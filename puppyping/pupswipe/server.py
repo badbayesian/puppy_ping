@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -24,7 +25,7 @@ DEFAULT_LIMIT = 40
 MAX_LIMIT = 200
 PAGE_SIZE = 1
 MAX_PUPPY_AGE_MONTHS = 8.0
-PUPSWIPE_SOURCE = "paws_chicago"
+DEFAULT_PUPSWIPE_SOURCES = ("paws_chicago", "wright_way")
 PROVIDER_DISCLAIMER = (
     "PuppyPing is not affiliated with any dog rescue, shelter, breeder, "
     "or adoption provider."
@@ -32,6 +33,44 @@ PROVIDER_DISCLAIMER = (
 EMAIL_PATTERN = re.compile(
     r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$"
 )
+
+
+def _get_pupswipe_sources() -> tuple[str, ...]:
+    """Return feed sources for PupSwipe from env, with sensible defaults.
+
+    Returns:
+        Tuple of enabled source keys.
+    """
+    raw = os.environ.get("PUPSWIPE_SOURCES", ",".join(DEFAULT_PUPSWIPE_SOURCES))
+    parsed = [item.strip() for item in raw.split(",") if item.strip()]
+    deduped = tuple(dict.fromkeys(parsed))
+    return deduped or DEFAULT_PUPSWIPE_SOURCES
+
+
+PUPSWIPE_SOURCES = _get_pupswipe_sources()
+
+
+def _provider_name(source: str | None, profile_url: str | None = None) -> str:
+    """Return a human-readable provider label for a profile.
+
+    Args:
+        source: Optional normalized provider source key.
+        profile_url: Optional profile URL for fallback detection.
+
+    Returns:
+        Provider display name.
+    """
+    if source == "paws_chicago":
+        return "PAWS Chicago"
+    if source == "wright_way":
+        return "Wright-Way Rescue"
+
+    url = (profile_url or "").lower()
+    if "pawschicago.org" in url:
+        return "PAWS Chicago"
+    if "petango.com" in url or "wright-wayrescue.org" in url:
+        return "Wright-Way Rescue"
+    return "Adoption Provider"
 
 
 def _ensure_app_schema(conn) -> None:
@@ -177,24 +216,26 @@ def _fetch_puppies(limit: int, offset: int = 0) -> list[dict]:
                         scraped_at_utc
                     FROM dog_profiles
                     ORDER BY dog_id, scraped_at_utc DESC
+                ), active AS (
+                    SELECT
+                        latest.*,
+                        dog_status.source
+                    FROM latest
+                    JOIN dog_status
+                      ON dog_status.link = latest.url
+                     AND dog_status.is_active = true
+                     AND dog_status.source = ANY(%s::text[])
                 )
                 SELECT *
-                FROM latest
-                WHERE EXISTS (
-                    SELECT 1
-                    FROM dog_status
-                    WHERE dog_status.link = latest.url
-                      AND dog_status.source = %s
-                      AND dog_status.is_active = true
-                )
-                  AND COALESCE(status, '') ILIKE 'Available%%'
+                FROM active
+                WHERE COALESCE(status, '') ILIKE 'Available%%'
                   AND age_months IS NOT NULL
                   AND age_months < %s
                 ORDER BY scraped_at_utc DESC, dog_id DESC
                 LIMIT %s
                 OFFSET %s;
                 """,
-                (PUPSWIPE_SOURCE, MAX_PUPPY_AGE_MONTHS, limit, max(0, offset)),
+                (list(PUPSWIPE_SOURCES), MAX_PUPPY_AGE_MONTHS, limit, max(0, offset)),
             )
             rows = cur.fetchall()
             columns = [col.name for col in cur.description]
@@ -237,14 +278,14 @@ def _count_puppies() -> int:
                     SELECT 1
                     FROM dog_status
                     WHERE dog_status.link = latest.url
-                      AND dog_status.source = %s
+                      AND dog_status.source = ANY(%s::text[])
                       AND dog_status.is_active = true
                 )
                   AND COALESCE(status, '') ILIKE 'Available%%'
                   AND age_months IS NOT NULL
                   AND age_months < %s;
                 """,
-                (PUPSWIPE_SOURCE, MAX_PUPPY_AGE_MONTHS),
+                (list(PUPSWIPE_SOURCES), MAX_PUPPY_AGE_MONTHS),
             )
             row = cur.fetchone()
             return int(row[0]) if row else 0
@@ -521,7 +562,17 @@ def _render_page(
             or "No description available yet. Open profile for full details."
         )
     )
-    profile_url = escape(str(pup.get("url") or "#"))
+    raw_profile_url = str(pup.get("url") or "").strip()
+    profile_url = escape(raw_profile_url or "#")
+    source_key = str(pup.get("source")) if pup.get("source") is not None else None
+    provider_name = escape(_provider_name(source_key, raw_profile_url))
+    if raw_profile_url:
+        provider_link_html = (
+            f'<a class="profile-link card-profile-link" href="{profile_url}" '
+            f'target="_blank" rel="noopener">View on {provider_name}</a>'
+        )
+    else:
+        provider_link_html = f'<span class="provider-missing">{provider_name}</span>'
 
     photo_urls = _get_photo_urls(pup)
     photo_count = len(photo_urls)
@@ -588,7 +639,10 @@ def _render_page(
             <p>By PuppyPing</p>
           </div>
         </div>
-        <div class="stats">{escape(stats)}</div>
+        <div class="topbar-meta">
+          <div class="stats">{escape(stats)}</div>
+          <a class="profile-link top-profile-link" href="{profile_url}" target="_blank" rel="noopener">Open profile</a>
+        </div>
       </header>
 
       {info_msg}
@@ -613,9 +667,17 @@ def _render_page(
               </div>
               <div class="badges">
                 <span class="badge">{status}</span>
+                <span class="badge badge-provider">{provider_name}</span>
               </div>
               {carousel_controls}
-              <p class="description">{description}</p>
+              <div class="description-wrap">
+                <h3 class="description-label">Description</h3>
+                <p class="description">{description}</p>
+              </div>
+              <div class="provider-panel">
+                <span class="provider-label">Provider link</span>
+                {provider_link_html}
+              </div>
             </div>
           </article>
         </section>
@@ -666,9 +728,6 @@ def _render_page(
         </form>
       </section>
 
-      <footer class="footer">
-        <a class="profile-link" href="{profile_url}" target="_blank" rel="noopener">Open profile</a>
-      </footer>
     </div>
     <script src="/swipe.js"></script>
   </body>
@@ -713,6 +772,9 @@ class AppHandler(SimpleHTTPRequestHandler):
         data = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -860,6 +922,9 @@ class AppHandler(SimpleHTTPRequestHandler):
             body = _render_page(offset=offset, message=msg, photo_index=photo_index)
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)

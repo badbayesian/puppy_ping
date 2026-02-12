@@ -62,14 +62,12 @@
       pointerId: ev.pointerId,
       startX: ev.clientX,
       startY: ev.clientY,
+      captured: false,
     };
     horizontalDrag = false;
     card.classList.add("is-dragging");
     card.style.transition = "none";
     card.style.willChange = "transform, opacity, filter";
-    if (typeof card.setPointerCapture === "function") {
-      card.setPointerCapture(ev.pointerId);
-    }
   });
 
   card.addEventListener("pointermove", (ev) => {
@@ -88,6 +86,10 @@
         return;
       }
       horizontalDrag = true;
+      if (!pointerState.captured && typeof card.setPointerCapture === "function") {
+        card.setPointerCapture(ev.pointerId);
+        pointerState.captured = true;
+      }
     }
 
     const rotate = Math.max(-16, Math.min(16, dx * 0.05));
@@ -103,12 +105,12 @@
     if (!pointerState || ev.pointerId !== pointerState.pointerId) {
       return;
     }
+    const wasCaptured = pointerState.captured;
+    const wasHorizontalDrag = horizontalDrag;
     const dx = ev.clientX - pointerState.startX;
     const dy = ev.clientY - pointerState.startY;
-    pointerState = null;
-    horizontalDrag = false;
 
-    if (typeof card.releasePointerCapture === "function") {
+    if (wasCaptured && typeof card.releasePointerCapture === "function") {
       try {
         card.releasePointerCapture(ev.pointerId);
       } catch {
@@ -116,11 +118,15 @@
       }
     }
 
-    if (horizontalDrag && Math.abs(dx) >= swipeThreshold && Math.abs(dx) > Math.abs(dy) * 1.2) {
+    if (wasHorizontalDrag && Math.abs(dx) >= swipeThreshold && Math.abs(dx) > Math.abs(dy) * 1.2) {
       submitSwipe(dx > 0 ? "right" : "left");
+      pointerState = null;
+      horizontalDrag = false;
       return;
     }
 
+    pointerState = null;
+    horizontalDrag = false;
     card.style.transition = "transform 0.16s ease, opacity 0.16s ease, filter 0.16s ease";
     resetVisual();
   }

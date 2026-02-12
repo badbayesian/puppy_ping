@@ -6,8 +6,9 @@ This repo is a combination of coding + vibe coding.
 
 Current behavior:
 - Scraper sources: `paws_chicago` and `wright_way`
-- PupSwipe feed: currently filtered to `paws_chicago` only
+- PupSwipe feed: includes `paws_chicago` and `wright_way`
 - Swipe mapping: `right = Like`, `left = Nope`
+- PupSwipe feed sources can be overridden with `PUPSWIPE_SOURCES` (comma-separated)
 
 ## Environment Modes
 
@@ -153,6 +154,14 @@ Production scheduling is internal to the `puppyping` container via cron:
   - `@reboot` (runs when container starts)
   - `0 13 * * *` (`1:00 PM`, `America/Chicago`)
 
+No host-level cron entry is required for scraper runs.
+
+After changing cron or scraper runtime files, rebuild/restart the scraper service:
+
+```bash
+docker compose --env-file .env -f compose.yml up -d --build puppyping
+```
+
 Inspect cron-driven scraper logs:
 
 ```bash
@@ -232,4 +241,5 @@ PupSwipe displays a disclaimer that PuppyPing is not affiliated with any rescue,
 - `puppyping/models.py`: core dataclasses.
 - `docker/puppyping.cron`: production cron schedule for scraper runs.
 - `docker/run_scrape_cron.sh`: cron task runner that executes one scrape cycle.
+- `scripts/backup_postgres.sh`: daily Postgres backup helper.
 - `tests/`: pytest suite.
