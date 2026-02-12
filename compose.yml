@@ -73,6 +73,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: puppyping-pupswipe
+    pull_policy: always
     environment:
       TZ: America/Chicago
       PGHOST: ${PGHOST}
