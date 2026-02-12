@@ -201,6 +201,55 @@ body {
   text-align: center;
 }
 
+.filter-strip {
+  width: min(92vw, 440px);
+  margin: 0 auto;
+}
+
+.breed-filter-form {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.84);
+  box-shadow: var(--shadow-md);
+}
+
+.breed-filter-form label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-soft);
+}
+
+.breed-filter-form input[type="text"] {
+  min-height: 40px;
+  border-radius: 10px;
+  border: 1px solid rgba(24, 22, 19, 0.14);
+  background: rgba(255, 255, 255, 0.9);
+  padding: 8px 10px;
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.clear-filter {
+  color: #735a3a;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 8px 6px;
+}
+
+.clear-filter:hover {
+  text-decoration: underline;
+}
+
 main {
   flex: 1;
   display: grid;
@@ -557,6 +606,16 @@ main {
   box-shadow: 0 12px 26px rgba(240, 164, 55, 0.18);
 }
 
+.btn.filter {
+  min-height: 40px;
+  padding: 0 14px;
+  width: auto;
+  background: rgba(24, 22, 19, 0.12);
+  color: #3f352b;
+  box-shadow: none;
+  font-size: 0.78rem;
+}
+
 .btn.like {
   background: rgba(24, 128, 94, 0.18);
   color: #0f6047;
@@ -706,6 +765,19 @@ main {
 
   .hero {
     text-align: left;
+  }
+
+  .breed-filter-form {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .breed-filter-form label {
+    order: -1;
+  }
+
+  .btn.filter {
+    width: 100%;
   }
 
   .stack {

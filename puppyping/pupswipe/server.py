@@ -26,6 +26,7 @@ DEFAULT_LIMIT = 40
 MAX_LIMIT = 200
 PAGE_SIZE = 1
 MAX_PUPPY_AGE_MONTHS = 8.0
+MAX_BREED_FILTER_LENGTH = 80
 DEFAULT_PUPSWIPE_SOURCES = ("paws_chicago", "wright_way")
 PROVIDER_DISCLAIMER = (
     "PuppyPing is not affiliated with any dog rescue, shelter, breeder, "
@@ -179,16 +180,34 @@ def _jsonify(obj):
     return _coerce_json(obj)
 
 
-def _fetch_puppies(limit: int, offset: int = 0) -> list[dict]:
+def _normalize_breed_filter(value: str | None) -> str:
+    """Normalize user-entered breed filter text."""
+    text = " ".join((value or "").split()).strip()
+    if not text:
+        return ""
+    return text[:MAX_BREED_FILTER_LENGTH]
+
+
+def _breed_like_pattern(breed_filter: str) -> str:
+    """Escape wildcard characters so breed filters match literal text."""
+    escaped = (
+        breed_filter.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
+    return f"%{escaped}%"
+
+
+def _fetch_puppies(limit: int, offset: int = 0, breed_filter: str = "") -> list[dict]:
     """Load the latest available dog profiles ordered by recency.
 
     Args:
         limit: Maximum number of profiles to return.
         offset: Number of rows to skip for pagination.
+        breed_filter: Optional case-insensitive breed text filter.
 
     Returns:
         A list of dog profile dictionaries.
     """
+    normalized_breed = _normalize_breed_filter(breed_filter)
     with get_connection() as conn:
         _ensure_app_schema(conn)
         with conn.cursor() as cur:
@@ -227,11 +246,19 @@ def _fetch_puppies(limit: int, offset: int = 0) -> list[dict]:
                 WHERE COALESCE(status, '') ILIKE 'Available%%'
                   AND age_months IS NOT NULL
                   AND age_months < %s
+                  AND (%s = '' OR COALESCE(breed, '') ILIKE %s ESCAPE '\\')
                 ORDER BY scraped_at_utc DESC, dog_id DESC
                 LIMIT %s
                 OFFSET %s;
                 """,
-                (list(PUPSWIPE_SOURCES), MAX_PUPPY_AGE_MONTHS, limit, max(0, offset)),
+                (
+                    list(PUPSWIPE_SOURCES),
+                    MAX_PUPPY_AGE_MONTHS,
+                    normalized_breed,
+                    _breed_like_pattern(normalized_breed),
+                    limit,
+                    max(0, offset),
+                ),
             )
             rows = cur.fetchall()
             columns = [col.name for col in cur.description]
@@ -247,12 +274,13 @@ def _fetch_puppies(limit: int, offset: int = 0) -> list[dict]:
     return puppies
 
 
-def _count_puppies() -> int:
+def _count_puppies(breed_filter: str = "") -> int:
     """Count latest dog profiles that are currently available.
 
     Returns:
         The number of available dogs based on each dog's latest record.
     """
+    normalized_breed = _normalize_breed_filter(breed_filter)
     with get_connection() as conn:
         _ensure_app_schema(conn)
         with conn.cursor() as cur:
@@ -262,6 +290,7 @@ def _count_puppies() -> int:
                     SELECT DISTINCT ON (dog_id)
                         dog_id,
                         url,
+                        breed,
                         age_months,
                         status,
                         scraped_at_utc
@@ -279,9 +308,15 @@ def _count_puppies() -> int:
                 )
                   AND COALESCE(status, '') ILIKE 'Available%%'
                   AND age_months IS NOT NULL
-                  AND age_months < %s;
+                  AND age_months < %s
+                  AND (%s = '' OR COALESCE(breed, '') ILIKE %s ESCAPE '\\');
                 """,
-                (list(PUPSWIPE_SOURCES), MAX_PUPPY_AGE_MONTHS),
+                (
+                    list(PUPSWIPE_SOURCES),
+                    MAX_PUPPY_AGE_MONTHS,
+                    normalized_breed,
+                    _breed_like_pattern(normalized_breed),
+                ),
             )
             row = cur.fetchone()
             return int(row[0]) if row else 0
@@ -434,6 +469,7 @@ def _render_page(
     message: str | None = None,
     photo_index: int = 0,
     randomize: bool = False,
+    breed_filter: str = "",
 ) -> bytes:
     """Render the main HTML page.
 
@@ -441,12 +477,22 @@ def _render_page(
         offset: Current dog index offset.
         message: Optional info/error message to display.
         photo_index: Selected image index within the current dog carousel.
+        randomize: Whether to pick a random dog from the current result set.
+        breed_filter: Optional breed filter text.
 
     Returns:
         UTF-8 encoded HTML document bytes.
     """
+    normalized_breed = _normalize_breed_filter(breed_filter)
+    escaped_breed = escape(normalized_breed)
+    breed_hidden_input = (
+        f'<input type="hidden" name="breed" value="{escaped_breed}" />'
+        if normalized_breed
+        else ""
+    )
+
     try:
-        total = _count_puppies()
+        total = _count_puppies(breed_filter=normalized_breed)
         if total > 0 and offset >= total:
             offset = 0
         if total > 1 and randomize:
@@ -457,7 +503,7 @@ def _render_page(
             offset = random_offset
         elif total == 1 and randomize:
             offset = 0
-        puppies = _fetch_puppies(PAGE_SIZE, offset=offset)
+        puppies = _fetch_puppies(PAGE_SIZE, offset=offset, breed_filter=normalized_breed)
     except Exception as exc:
         error_html = f"""<!doctype html>
 <html lang="en">
@@ -489,8 +535,42 @@ def _render_page(
         return error_html.encode("utf-8")
 
     stats = f"{max(total - offset, 0)} left of {total}" if total else "No puppies found"
+    if normalized_breed:
+        stats = f"{stats} · Filter: {normalized_breed}"
+
+    clear_filter_html = ""
+    if normalized_breed:
+        clear_query = urlencode({"offset": "0"})
+        clear_filter_html = f'<a class="clear-filter" href="/?{clear_query}">Clear</a>'
+
+    filter_bar = f"""
+      <section class="filter-strip" aria-label="Breed filter">
+        <form class="breed-filter-form" method="get" action="/">
+          <input type="hidden" name="offset" value="0" />
+          <label for="breed-filter">Breed</label>
+          <input
+            id="breed-filter"
+            name="breed"
+            type="text"
+            value="{escaped_breed}"
+            placeholder="e.g. Labrador"
+            maxlength="{MAX_BREED_FILTER_LENGTH}"
+          />
+          <button class="btn filter" type="submit">Filter</button>
+          {clear_filter_html}
+        </form>
+      </section>
+    """
 
     if not puppies:
+        empty_msg = (
+            message
+            or (
+                "No puppies match that breed filter. Try another breed."
+                if normalized_breed
+                else "No puppies to show yet. Run scraper and refresh."
+            )
+        )
         no_data = f"""<!doctype html>
 <html lang="en">
   <head>
@@ -511,14 +591,16 @@ def _render_page(
         </div>
         <div class="stats">{escape(stats)}</div>
       </header>
+      {filter_bar}
       <main>
         <section class="stack">
-          <div class="state state-empty">{escape(message or "No puppies to show yet. Run scraper and refresh.")}</div>
+          <div class="state state-empty">{escape(empty_msg)}</div>
         </section>
         <section class="controls">
           <form method="get" action="/">
             <input type="hidden" name="offset" value="{offset}" />
             <input type="hidden" name="random" value="1" />
+            {breed_hidden_input}
             <button class="btn refresh" type="submit">Random</button>
           </form>
         </section>
@@ -533,6 +615,7 @@ def _render_page(
           <form class="subscribe-form" method="post" action="/subscribe">
             <input type="hidden" name="offset" value="{offset}" />
             <input type="hidden" name="photo" value="0" />
+            <input type="hidden" name="breed" value="{escaped_breed}" />
             <label class="subscribe-label" for="subscribe-email-empty">Email for PuppyPing alerts</label>
             <div class="subscribe-row">
               <input
@@ -607,6 +690,7 @@ def _render_page(
               <form method="get" action="/">
                 <input type="hidden" name="offset" value="{offset}" />
                 <input type="hidden" name="photo" value="{prev_photo}" />
+                {breed_hidden_input}
                 <button class="carousel-btn" type="submit" aria-label="Previous photo">Prev</button>
               </form>
               <div class="carousel-middle">
@@ -616,6 +700,7 @@ def _render_page(
               <form method="get" action="/">
                 <input type="hidden" name="offset" value="{offset}" />
                 <input type="hidden" name="photo" value="{next_photo}" />
+                {breed_hidden_input}
                 <button class="carousel-btn" type="submit" aria-label="Next photo">Next</button>
               </form>
             </div>
@@ -653,6 +738,7 @@ def _render_page(
       </header>
 
       {info_msg}
+      {filter_bar}
 
       <main>
         <section class="stack">
@@ -693,17 +779,20 @@ def _render_page(
           <form id="swipe-nope-form" method="post" action="/swipe">
             <input type="hidden" name="dog_id" value="{dog_id}" />
             <input type="hidden" name="offset" value="{offset}" />
+            <input type="hidden" name="breed" value="{escaped_breed}" />
             <input type="hidden" name="swipe" value="left" />
             <button class="btn nope" type="submit">Nope</button>
           </form>
           <form method="get" action="/">
             <input type="hidden" name="offset" value="{offset}" />
             <input type="hidden" name="random" value="1" />
+            {breed_hidden_input}
             <button class="btn refresh" type="submit">Random</button>
           </form>
           <form id="swipe-like-form" method="post" action="/swipe">
             <input type="hidden" name="dog_id" value="{dog_id}" />
             <input type="hidden" name="offset" value="{offset}" />
+            <input type="hidden" name="breed" value="{escaped_breed}" />
             <input type="hidden" name="swipe" value="right" />
             <button class="btn like" type="submit">Like</button>
           </form>
@@ -721,6 +810,7 @@ def _render_page(
         <form class="subscribe-form" method="post" action="/subscribe">
           <input type="hidden" name="offset" value="{offset}" />
           <input type="hidden" name="photo" value="{current_photo_index}" />
+          <input type="hidden" name="breed" value="{escaped_breed}" />
           <label class="subscribe-label" for="subscribe-email">Email for PuppyPing alerts</label>
           <div class="subscribe-row">
             <input
@@ -905,8 +995,9 @@ class AppHandler(SimpleHTTPRequestHandler):
             except ValueError:
                 return self._send_json(400, {"error": "limit must be an integer"})
             limit = max(1, min(MAX_LIMIT, limit))
+            breed_filter = _normalize_breed_filter(query.get("breed", [""])[0])
             try:
-                puppies = _fetch_puppies(limit)
+                puppies = _fetch_puppies(limit, breed_filter=breed_filter)
             except Exception as exc:
                 return self._send_json(
                     500,
@@ -927,6 +1018,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             query = parse_qs(parsed.query)
             offset = _safe_int(query.get("offset", ["0"])[0], 0)
             photo_index = _safe_int(query.get("photo", ["0"])[0], 0)
+            breed_filter = _normalize_breed_filter(query.get("breed", [""])[0])
             randomize = query.get("random", ["0"])[0].strip().lower() in {
                 "1",
                 "true",
@@ -939,6 +1031,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 message=msg,
                 photo_index=photo_index,
                 randomize=randomize,
+                breed_filter=breed_filter,
             )
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -966,9 +1059,12 @@ class AppHandler(SimpleHTTPRequestHandler):
 
             offset = _safe_int(form.get("offset", ["0"])[0], 0)
             photo_index = _safe_int(form.get("photo", ["0"])[0], 0)
+            breed_filter = _normalize_breed_filter(form.get("breed", [""])[0])
             email = _normalize_email(form.get("email", [""])[0])
 
             query_params = {"offset": str(offset), "photo": str(photo_index)}
+            if breed_filter:
+                query_params["breed"] = breed_filter
             if not _is_valid_email(email):
                 query_params["msg"] = "Enter a valid email address."
                 query = urlencode(query_params)
@@ -1010,15 +1106,23 @@ class AppHandler(SimpleHTTPRequestHandler):
             try:
                 dog_id = int(form.get("dog_id", [""])[0])
             except (TypeError, ValueError):
+                breed_filter = _normalize_breed_filter(form.get("breed", [""])[0])
+                query_params = {"msg": "Invalid dog id"}
+                if breed_filter:
+                    query_params["breed"] = breed_filter
                 self.send_response(303)
-                self.send_header("Location", "/?msg=Invalid+dog+id")
+                self.send_header("Location", f"/?{urlencode(query_params)}")
                 self.end_headers()
                 return
 
             swipe = form.get("swipe", [""])[0]
+            breed_filter = _normalize_breed_filter(form.get("breed", [""])[0])
             if swipe not in ("left", "right"):
+                query_params = {"msg": "Invalid swipe value"}
+                if breed_filter:
+                    query_params["breed"] = breed_filter
                 self.send_response(303)
-                self.send_header("Location", "/?msg=Invalid+swipe+value")
+                self.send_header("Location", f"/?{urlencode(query_params)}")
                 self.end_headers()
                 return
 
@@ -1031,13 +1135,19 @@ class AppHandler(SimpleHTTPRequestHandler):
                     **self._user_context(form_payload),
                 )
             except Exception as exc:
-                query = urlencode({"msg": f"Failed to store swipe: {exc}"})
+                query_params = {"msg": f"Failed to store swipe: {exc}"}
+                if breed_filter:
+                    query_params["breed"] = breed_filter
+                query = urlencode(query_params)
                 self.send_response(303)
                 self.send_header("Location", f"/?{query}")
                 self.end_headers()
                 return
 
-            query = urlencode({"offset": str(offset + 1)})
+            query_params = {"offset": str(offset + 1)}
+            if breed_filter:
+                query_params["breed"] = breed_filter
+            query = urlencode(query_params)
             self.send_response(303)
             self.send_header("Location", f"/?{query}")
             self.end_headers()

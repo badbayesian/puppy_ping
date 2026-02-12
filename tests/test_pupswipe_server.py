@@ -101,7 +101,9 @@ def test_fetch_puppies_queries_multiple_sources(monkeypatch):
     assert puppies[0]["primary_image"] == "https://g.petango.com/photos/364/a.jpg"
     query, params = conn.cursor_obj.executed[-1]
     assert "dog_status.source = ANY(%s::text[])" in query
+    assert "COALESCE(breed, '') ILIKE %s ESCAPE '\\'" in query
     assert params[0] == ["paws_chicago", "wright_way"]
+    assert params[2] == ""
 
 
 def test_count_puppies_queries_multiple_sources(monkeypatch):
@@ -115,15 +117,17 @@ def test_count_puppies_queries_multiple_sources(monkeypatch):
     assert total == 7
     query, params = conn.cursor_obj.executed[-1]
     assert "dog_status.source = ANY(%s::text[])" in query
+    assert "COALESCE(breed, '') ILIKE %s ESCAPE '\\'" in query
     assert params[0] == ["paws_chicago", "wright_way"]
+    assert params[2] == ""
 
 
 def test_render_page_has_uniform_card_structure_for_paws(monkeypatch):
-    monkeypatch.setattr(pupswipe, "_count_puppies", lambda: 1)
+    monkeypatch.setattr(pupswipe, "_count_puppies", lambda breed_filter="": 1)
     monkeypatch.setattr(
         pupswipe,
         "_fetch_puppies",
-        lambda limit, offset=0: [
+        lambda limit, offset=0, breed_filter="": [
             {
                 "dog_id": 1,
                 "url": "https://www.pawschicago.org/pet-available-for-adoption/showdog/123",
@@ -149,11 +153,11 @@ def test_render_page_has_uniform_card_structure_for_paws(monkeypatch):
 
 
 def test_render_page_has_uniform_card_structure_for_wright_way(monkeypatch):
-    monkeypatch.setattr(pupswipe, "_count_puppies", lambda: 1)
+    monkeypatch.setattr(pupswipe, "_count_puppies", lambda breed_filter="": 1)
     monkeypatch.setattr(
         pupswipe,
         "_fetch_puppies",
-        lambda limit, offset=0: [
+        lambda limit, offset=0, breed_filter="": [
             {
                 "dog_id": 2,
                 "url": "http://ws.petango.com/webservices/adoptablesearch/wsAdoptableAnimalDetails.aspx?id=60044823",
@@ -179,11 +183,11 @@ def test_render_page_has_uniform_card_structure_for_wright_way(monkeypatch):
 
 
 def test_render_page_shows_random_button(monkeypatch):
-    monkeypatch.setattr(pupswipe, "_count_puppies", lambda: 1)
+    monkeypatch.setattr(pupswipe, "_count_puppies", lambda breed_filter="": 1)
     monkeypatch.setattr(
         pupswipe,
         "_fetch_puppies",
-        lambda limit, offset=0: [
+        lambda limit, offset=0, breed_filter="": [
             {
                 "dog_id": 3,
                 "url": "https://example.com/dog/3",
@@ -200,19 +204,22 @@ def test_render_page_shows_random_button(monkeypatch):
         ],
     )
 
-    html = pupswipe._render_page(offset=0).decode("utf-8")
+    html = pupswipe._render_page(offset=0, breed_filter="Labrador").decode("utf-8")
     assert ">Random</button>" in html
     assert 'name="random" value="1"' in html
+    assert 'name="breed" value="Labrador"' in html
+    assert 'id="breed-filter"' in html
 
 
 def test_render_page_randomize_uses_random_offset(monkeypatch):
-    monkeypatch.setattr(pupswipe, "_count_puppies", lambda: 5)
+    monkeypatch.setattr(pupswipe, "_count_puppies", lambda breed_filter="": 5)
     monkeypatch.setattr(pupswipe.random, "randrange", lambda n: 1)
 
     captured = {}
 
-    def fake_fetch(limit, offset=0):
+    def fake_fetch(limit, offset=0, breed_filter=""):
         captured["offset"] = offset
+        captured["breed_filter"] = breed_filter
         return [
             {
                 "dog_id": 4,
@@ -230,7 +237,8 @@ def test_render_page_randomize_uses_random_offset(monkeypatch):
         ]
 
     monkeypatch.setattr(pupswipe, "_fetch_puppies", fake_fetch)
-    pupswipe._render_page(offset=1, randomize=True)
+    pupswipe._render_page(offset=1, randomize=True, breed_filter="lab")
 
     # random.randrange(total - 1) -> 1, then offset shifts to avoid current offset 1.
     assert captured["offset"] == 2
+    assert captured["breed_filter"] == "lab"
