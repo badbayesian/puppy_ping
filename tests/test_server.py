@@ -112,3 +112,49 @@ def test_run_continues_when_profile_fetch_raises(monkeypatch):
     server.run(send_ping=False, max_age=8.0, store_in_db=True)
 
     assert stored["count"] == 2
+
+
+def test_run_sanitizes_email_recipients(monkeypatch):
+    profile = DogProfile(
+        dog_id=-3,
+        url="u",
+        age_months=6,
+        media=DogMedia(),
+    )
+
+    monkeypatch.setattr(
+        server,
+        "fetch_adoptable_dog_profile_links",
+        lambda source, store_in_db: {f"https://example.com/{source}/u"},
+    )
+    monkeypatch.setattr(server, "fetch_dog_profile", lambda source, url: profile)
+    monkeypatch.setattr(server, "tqdm", lambda items, desc=None: items)
+    monkeypatch.setattr(server, "store_dog_status", lambda *args, **kwargs: None)
+    monkeypatch.setattr(server, "store_profiles_in_db", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        server,
+        "get_email_subscribers",
+        lambda logger=None: [
+            "db@example.com",
+            "DB@example.com ",
+            "not-an-email",
+            "Name <bad@example.com>",
+            "bad@example.com\r\nbcc:evil@example.com",
+        ],
+    )
+    monkeypatch.setenv(
+        "EMAILS_TO",
+        " Good@Example.com, bad@@example.com, Name <x@example.com>, good@example.com ",
+    )
+
+    sent = []
+    monkeypatch.setattr(
+        server,
+        "send_email",
+        lambda profiles, send_to, send=True: sent.append(send_to),
+    )
+
+    server.logger = DummyLogger()
+    server.run(send_ping=True, max_age=8.0, store_in_db=True)
+
+    assert sent == ["good@example.com", "db@example.com"]

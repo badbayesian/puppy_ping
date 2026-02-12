@@ -4,6 +4,7 @@ import logging
 from typing import Optional
 
 from .db import get_email_subscribers, store_dog_status, store_profiles_in_db
+from .email_utils import parse_email_list, sanitize_emails
 from .emailer import send_email
 from .providers import (
     fetch_adoptable_dog_profile_links,
@@ -59,11 +60,7 @@ def run(
         # Store all scraped profiles; email filtering happens separately.
         store_profiles_in_db(profiles, logger=logger)
     if send_ping:
-        configured = [
-            email.strip()
-            for email in os.environ.get("EMAILS_TO", "").split(",")
-            if email.strip()
-        ]
+        configured = sanitize_emails(parse_email_list(os.environ.get("EMAILS_TO", "")))
         recipients = configured
         if store_in_db:
             try:
@@ -71,13 +68,21 @@ def run(
             except Exception as exc:
                 logger.warning(f"Could not load DB subscribers: {exc}")
                 subscribers = []
-            recipients = list(
-                dict.fromkeys([*configured, *[email for email in subscribers if email]])
-            )
+            recipients = sanitize_emails([*configured, *subscribers])
 
-        _ = [send_email(filtered_profiles, send_to=sending) for sending in recipients]
+        if not recipients:
+            logger.info("No valid email recipients configured.")
+            return
+
+        delivered = 0
+        for sending in recipients:
+            try:
+                send_email(filtered_profiles, send_to=sending)
+                delivered += 1
+            except Exception as exc:
+                logger.warning(f"Failed to send email to {sending}: {exc}")
         logger.info(
-            f"Sent email to {len(recipients)} recipients."
+            f"Sent email to {delivered} recipients."
         )
 
 

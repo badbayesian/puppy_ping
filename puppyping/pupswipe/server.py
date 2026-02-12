@@ -11,7 +11,6 @@ import hashlib
 import json
 import os
 import random
-import re
 from datetime import datetime, timezone
 from decimal import Decimal
 from html import escape
@@ -20,6 +19,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from puppyping.db import add_email_subscriber, ensure_schema, get_connection
+from puppyping.email_utils import is_valid_email, normalize_email
 
 APP_DIR = Path(__file__).resolve().parent
 DEFAULT_LIMIT = 40
@@ -31,11 +31,6 @@ PROVIDER_DISCLAIMER = (
     "PuppyPing is not affiliated with any dog rescue, shelter, breeder, "
     "or adoption provider."
 )
-EMAIL_PATTERN = re.compile(
-    r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$"
-)
-
-
 def _get_pupswipe_sources() -> tuple[str, ...]:
     """Return feed sources for PupSwipe from env, with sensible defaults.
 
@@ -376,7 +371,7 @@ def _normalize_email(email: str | None) -> str:
     Returns:
         Lower-cased, trimmed email string.
     """
-    return (email or "").strip().lower()
+    return normalize_email(email)
 
 
 def _is_valid_email(email: str) -> bool:
@@ -388,9 +383,7 @@ def _is_valid_email(email: str) -> bool:
     Returns:
         ``True`` when the email looks valid, otherwise ``False``.
     """
-    if len(email) > 320:
-        return False
-    return bool(EMAIL_PATTERN.fullmatch(email))
+    return is_valid_email(email)
 
 
 def _get_primary_image(pup: dict) -> str | None:

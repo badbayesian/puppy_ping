@@ -17,6 +17,7 @@ else:
     _PSYCOPG_IMPORT_ERROR = None
 
 from .models import DogProfile
+from .email_utils import sanitize_email, sanitize_emails
 
 
 def _require_psycopg() -> None:
@@ -281,7 +282,7 @@ def add_email_subscriber(
     email: str, source: str = "unknown", logger: Logger | None = None
 ) -> bool:
     _require_psycopg()
-    normalized = email.strip().lower()
+    normalized = sanitize_email(email)
     if not normalized:
         return False
 
@@ -321,7 +322,7 @@ def get_email_subscribers(logger: Logger | None = None) -> list[str]:
                 """
             )
             rows = cur.fetchall()
-    emails = [str(row[0]).strip().lower() for row in rows if row and row[0]]
+    emails = sanitize_emails(str(row[0]) for row in rows if row and row[0])
     if logger:
         logger.info(f"Loaded {len(emails)} email subscribers from DB.")
     return emails

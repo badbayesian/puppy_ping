@@ -1,6 +1,7 @@
 import os
 
 import smtplib
+import pytest
 
 from puppyping.emailer import send_email
 from puppyping.models import DogMedia, DogProfile
@@ -49,3 +50,21 @@ def test_send_email_no_send(monkeypatch):
     smtp = dummy["smtp"]
     assert smtp.logged_in is True
     assert smtp.sent is False
+
+
+def test_send_email_rejects_invalid_recipient(monkeypatch):
+    monkeypatch.setenv("EMAIL_FROM", "From <from@example.com>")
+    monkeypatch.setenv("EMAIL_HOST", "smtp.example.com")
+    monkeypatch.setenv("EMAIL_PORT", "465")
+    monkeypatch.setenv("EMAIL_USER", "user")
+    monkeypatch.setenv("EMAIL_PASS", "pass")
+
+    monkeypatch.setattr(
+        smtplib,
+        "SMTP_SSL",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not connect")),
+    )
+
+    profile = DogProfile(dog_id=1, url="u", media=DogMedia())
+    with pytest.raises(ValueError, match="Invalid recipient email"):
+        send_email([profile], send_to="Name <to@example.com>", send=False)

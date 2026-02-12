@@ -7,6 +7,7 @@ from email.message import EmailMessage
 from html import escape
 
 from typing import TYPE_CHECKING
+from .email_utils import sanitize_email
 
 if TYPE_CHECKING:
     from .models import DogProfile
@@ -21,9 +22,13 @@ def send_email(profiles: list["DogProfile"], send_to: str, send: bool = True) ->
         send: When True, send via SMTP; otherwise print the message.
     """
     ts = datetime.now().strftime("%Y-%m-%d %H")
+    recipient = sanitize_email(send_to)
+    if not recipient:
+        raise ValueError(f"Invalid recipient email: {send_to!r}")
+
     msg = EmailMessage()
     msg["From"] = os.environ["EMAIL_FROM"]
-    msg["To"] = send_to
+    msg["To"] = recipient
     msg["Subject"] = f"PAWS Chicago - {len(profiles)} Adoptable Dogs as of {ts}"
 
     # -------- text version --------
