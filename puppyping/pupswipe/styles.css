@@ -202,20 +202,26 @@ body {
 }
 
 .filter-strip {
-  width: min(92vw, 440px);
+  width: min(92vw, 640px);
   margin: 0 auto;
 }
 
 .breed-filter-form {
   display: grid;
-  grid-template-columns: auto 1fr auto auto;
-  align-items: center;
-  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto auto;
+  align-items: end;
+  gap: 10px;
   border-radius: 14px;
   padding: 10px 12px;
   background: rgba(255, 255, 255, 0.75);
   border: 1px solid rgba(255, 255, 255, 0.84);
   box-shadow: var(--shadow-md);
+}
+
+.breed-filter-form .filter-field {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
 }
 
 .breed-filter-form label {
@@ -226,7 +232,9 @@ body {
   color: var(--ink-soft);
 }
 
-.breed-filter-form input[type="text"] {
+.breed-filter-form input[type="text"],
+.breed-filter-form select {
+  width: 100%;
   min-height: 40px;
   border-radius: 10px;
   border: 1px solid rgba(24, 22, 19, 0.14);
@@ -236,7 +244,16 @@ body {
   font-size: 0.9rem;
 }
 
+.breed-filter-form select {
+  appearance: none;
+}
+
+.btn.filter {
+  min-height: 40px;
+}
+
 .clear-filter {
+  align-self: end;
   color: #735a3a;
   text-decoration: none;
   font-weight: 700;
@@ -722,6 +739,161 @@ main {
   font-size: 0.86rem;
 }
 
+.account-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.account-email {
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+  font-weight: 600;
+  max-width: min(70vw, 280px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.account-link {
+  padding: 9px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: var(--shadow-md);
+  font-size: 0.86rem;
+}
+
+.inline-form {
+  margin: 0;
+}
+
+.inline-form .btn {
+  width: auto;
+  min-height: 36px;
+  padding: 0 12px;
+  letter-spacing: 0.05em;
+  font-size: 0.74rem;
+}
+
+.btn.subtle {
+  background: rgba(24, 22, 19, 0.1);
+  color: #3f352b;
+  box-shadow: none;
+}
+
+.auth-shell {
+  width: min(92vw, 500px);
+  margin: 0 auto;
+}
+
+.auth-card {
+  display: grid;
+  gap: var(--space-3);
+  border-radius: var(--radius-xl);
+  background: var(--surface-strong);
+  border: 1px solid var(--border-soft);
+  box-shadow: var(--shadow-lg);
+  padding: clamp(18px, 3vw, 28px);
+}
+
+.auth-card h2 {
+  margin: 0;
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-size: 1.52rem;
+}
+
+.auth-copy {
+  margin: 0;
+  color: var(--ink-soft);
+  line-height: 1.45;
+}
+
+.auth-form {
+  display: grid;
+  gap: 8px;
+}
+
+.auth-form label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.auth-form input[type="email"] {
+  width: 100%;
+  min-height: 46px;
+  border-radius: 11px;
+  border: 1px solid rgba(24, 22, 19, 0.14);
+  padding: 10px 12px;
+  font-size: 0.94rem;
+  color: #2d2823;
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.likes-shell {
+  width: min(96vw, 980px);
+  margin: 0 auto;
+}
+
+.liked-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.liked-card {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--surface-strong);
+  border: 1px solid var(--border-soft);
+  box-shadow: var(--shadow-md);
+  padding: 12px;
+}
+
+.liked-photo {
+  border-radius: 14px;
+  overflow: hidden;
+  background: rgba(24, 22, 19, 0.06);
+  min-height: 150px;
+}
+
+.liked-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.liked-body {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.liked-body h3 {
+  margin: 0;
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-size: 1.25rem;
+}
+
+.liked-meta,
+.liked-time,
+.liked-id {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
 @keyframes floatIn {
   from {
     opacity: 0;
@@ -763,6 +935,11 @@ main {
     justify-content: space-between;
   }
 
+  .account-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
   .hero {
     text-align: left;
   }
@@ -772,12 +949,20 @@ main {
     align-items: stretch;
   }
 
-  .breed-filter-form label {
-    order: -1;
-  }
-
   .btn.filter {
     width: 100%;
+  }
+
+  .clear-filter {
+    padding-left: 0;
+  }
+
+  .liked-card {
+    grid-template-columns: 1fr;
+  }
+
+  .liked-photo {
+    min-height: 220px;
   }
 
   .stack {

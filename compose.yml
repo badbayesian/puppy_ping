@@ -81,6 +81,7 @@ services:
       PGUSER: ${PGUSER}
       PGPASSWORD: ${PGPASSWORD}
       PGDATABASE: ${PGDATABASE}
+      PUPSWIPE_SESSION_SECRET: ${PUPSWIPE_SESSION_SECRET:-}
     command:
       - python
       - -m

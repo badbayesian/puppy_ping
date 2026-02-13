@@ -209,6 +209,8 @@ Schedule daily backup at 1:30 AM with 30-day retention:
   - `swipe: "right"` = like
   - `swipe: "left"` = nope
 - `GET /api/health` checks DB connectivity.
+- `GET /signin` renders email sign-in (Gmail/Outlook/any valid email).
+- `GET /likes` shows liked puppies for the signed-in user.
 
 Example payload:
 
@@ -226,6 +228,8 @@ Example payload:
 - `cached_links`: per-link cache with source + active flags.
 - `dog_status`: current active links by source.
 - `dog_swipes`: PupSwipe left/right interactions + basic client metadata.
+- `users`: signed-in PupSwipe users (email keyed).
+- `dog_likes`: per-user liked dogs keyed by `user_id`.
 - `email_subscribers`: PuppyPing alert subscriptions.
 
 ## Legal Note in App
