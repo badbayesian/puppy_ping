@@ -26,6 +26,7 @@ PROFILE_HTML = f"""
       Click a number to change picture or play to see a video:
       [ 1 ] [ 2 ] [ 3 ]
       Animal ID 60044823
+      Species Dog
       Breed Retriever, Labrador/Mix
       Gender Female
       Age 3 months 1 day
@@ -35,6 +36,7 @@ PROFILE_HTML = f"""
 
     <table>
       <tr><td>Animal ID</td><td>60044823</td></tr>
+      <tr><td>Species</td><td>Dog</td></tr>
       <tr><td>Breed</td><td>Retriever, Labrador/Mix</td></tr>
       <tr><td>Age</td><td>3 months 1 day</td></tr>
       <tr><td>Gender</td><td>Female</td></tr>
@@ -83,15 +85,16 @@ def test_extract_description_trims_petango_footer():
     assert "Click a number to change picture or play to see a video" not in description
 
 
-def test_fetch_dog_profile_wrightway_parses_name_weight_media(monkeypatch):
+def test_fetch_pet_profile_wrightway_parses_name_weight_media(monkeypatch):
     wrightway.cache.clear()
     monkeypatch.setattr(
         wrightway, "_get_soup", lambda _: BeautifulSoup(PROFILE_HTML, "html.parser")
     )
 
-    profile = wrightway.fetch_dog_profile_wrightway(PROFILE_URL + "&test=paloma")
+    profile = wrightway.fetch_pet_profile_wrightway(PROFILE_URL + "&test=paloma")
 
     assert profile.dog_id == 60044823
+    assert profile.species == "dog"
     assert profile.name == "Paloma"
     assert profile.breed == "Retriever, Labrador/Mix"
     assert profile.gender == "Female"
@@ -103,3 +106,17 @@ def test_fetch_dog_profile_wrightway_parses_name_weight_media(monkeypatch):
     assert profile.description is not None
     assert profile.description.startswith("A sweet lab mix puppy")
     assert "THANK YOU FOR YOUR INTEREST IN SAVING A LIFE!" not in profile.description
+
+
+def test_fetch_pet_profile_wrightway_parses_cat_species(monkeypatch):
+    wrightway.cache.clear()
+    cat_html = PROFILE_HTML.replace("Species Dog", "Species Cat").replace(
+        "<tr><td>Species</td><td>Dog</td></tr>",
+        "<tr><td>Species</td><td>Cat</td></tr>",
+    )
+    monkeypatch.setattr(
+        wrightway, "_get_soup", lambda _: BeautifulSoup(cat_html, "html.parser")
+    )
+
+    profile = wrightway.fetch_pet_profile_wrightway(PROFILE_URL + "&test=cat")
+    assert profile.species == "cat"

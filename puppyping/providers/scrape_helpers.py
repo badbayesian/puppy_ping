@@ -8,9 +8,9 @@ import requests
 from bs4 import BeautifulSoup
 
 try:
-    from ..models import DogMedia
+    from ..models import PetMedia
 except ImportError:  # Allows running as a script: python puppyping/providers/scrape_helpers.py
-    from models import DogMedia
+    from models import PetMedia
 
 
 def _get_soup(url: str) -> BeautifulSoup:
@@ -151,6 +151,62 @@ def _extract_single_rating(soup: BeautifulSoup, label: str) -> Optional[int]:
     return m
 
 
+_RATING_LABEL_TO_KEY = {
+    "children": "children",
+    "dogs": "dogs",
+    "cats": "cats",
+    "home alone": "home_alone",
+    "activity": "activity",
+    "environment": "environment",
+    "human sociability": "human_sociability",
+    "enrichment": "enrichment",
+}
+
+_RATING_CLASS_TO_KEY = {
+    "children": "children",
+    "dogs": "dogs",
+    "cats": "cats",
+    "home_alone": "home_alone",
+    "activity": "activity",
+    "environment": "environment",
+    # PAWS cat markup swaps class names vs rendered label text.
+    "human": "enrichment",
+    "enrichment": "human_sociability",
+}
+
+
+def _normalize_rating_key(label: str) -> str | None:
+    """Normalize rating label text to a stable key."""
+    normalized = _clean_text(label).lower()
+    return _RATING_LABEL_TO_KEY.get(normalized)
+
+
+def _extract_rating_from_block(block: BeautifulSoup) -> tuple[str | None, int | None]:
+    """Extract canonical rating key/value from a rating block node."""
+    icon = block.select_one(".icon")
+    label_text = icon.get_text(" ", strip=True) if icon else ""
+    key = _normalize_rating_key(label_text)
+    if key is None:
+        for cls in block.get("class", []):
+            key = _RATING_CLASS_TO_KEY.get(str(cls).strip().lower())
+            if key:
+                break
+
+    active = block.select_one("span.rating_default span.active")
+    rating: int | None = None
+    if active is not None:
+        match = re.search(r"\br([0-5])\b", " ".join(active.get("class", [])))
+        if match:
+            rating = int(match.group(1))
+
+    if rating is None:
+        text = _clean_text(block.get_text(" ", strip=True)).lower()
+        if "unknown" in text:
+            rating = 0
+
+    return key, rating
+
+
 def _extract_ratings(soup: BeautifulSoup) -> dict[str, Optional[int]]:
     """Extract all rating categories into a dict.
 
@@ -160,9 +216,35 @@ def _extract_ratings(soup: BeautifulSoup) -> dict[str, Optional[int]]:
     Returns:
         Mapping of rating category to value.
     """
-    categories = ["children", "dogs", "cats", "home_alone", "activity", "environment"]
+    ratings: dict[str, Optional[int]] = {}
 
-    return {cat: _extract_single_rating(soup, cat) for cat in categories}
+    for block in soup.select("span.rating_default"):
+        container = block.parent
+        if not container:
+            continue
+        key, value = _extract_rating_from_block(container)
+        if key and value is not None and key not in ratings:
+            ratings[key] = value
+
+    # Fallback to legacy class-based selectors for older layouts.
+    for legacy_class in (
+        "children",
+        "dogs",
+        "cats",
+        "home_alone",
+        "activity",
+        "environment",
+        "human",
+        "enrichment",
+    ):
+        mapped_key = _RATING_CLASS_TO_KEY.get(legacy_class, legacy_class)
+        if mapped_key in ratings:
+            continue
+        value = _extract_single_rating(soup, legacy_class)
+        if value is not None:
+            ratings[mapped_key] = value
+
+    return ratings
 
 
 def _extract_description(soup: BeautifulSoup) -> Optional[str]:
@@ -183,7 +265,7 @@ def _extract_description(soup: BeautifulSoup) -> Optional[str]:
 
 def _extract_media(
     url: str, soup: BeautifulSoup, image_prefixes: tuple[str, ...] | None = None
-) -> DogMedia:
+) -> PetMedia:
     """Collect image, video, and embed URLs from the page.
 
     Args:
@@ -192,7 +274,7 @@ def _extract_media(
         image_prefixes: Optional tuple of allowed image URL prefixes.
 
     Returns:
-        DogMedia with collected URLs.
+        PetMedia with collected URLs.
     """
     images, videos, embeds = set(), set(), set()
 
@@ -211,4 +293,4 @@ def _extract_media(
         if re.search(r"\.(mp4|mov|m4v)$", a["href"], re.I):
             videos.add(urljoin(url, a["href"]))
 
-    return DogMedia(sorted(images), sorted(videos), sorted(embeds))
+    return PetMedia(sorted(images), sorted(videos), sorted(embeds))

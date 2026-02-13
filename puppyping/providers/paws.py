@@ -25,10 +25,10 @@ from .scrape_helpers import (
 )
 
 try:
-    from ..models import DogMedia, DogProfile
+    from ..models import PetProfile
     from ..db import get_cached_links, store_cached_links
 except ImportError:  # Allows running as a script: python puppyping/puppy_scraper.py
-    from models import DogMedia, DogProfile
+    from models import PetProfile
     from db import get_cached_links, store_cached_links
 
 
@@ -40,9 +40,12 @@ logger = logging.getLogger(__name__)
 # Constants
 # ===========================
 
-DOG_SOURCE = "paws_chicago"
+SOURCE = "paws_chicago"
 PAWS_AVAILABLE_URL = "https://www.pawschicago.org/our-work/pets-adoption/pets-available"
-DOG_PROFILE_PATH_RE = re.compile(r"^/pet-available-for-adoption/showdog/\d+$")
+PET_PROFILE_PATH_RE = re.compile(
+    r"^/pet-available-for-adoption/show([a-z]+)/(\d+)$",
+    re.IGNORECASE,
+)
 CANTO_IMAGE_PREFIX = "https://pawschicago.canto.com/direct/image/"
 CACHE_TIME = 24 * 60 * 60  # 24 hours
 
@@ -99,10 +102,8 @@ def cached(ttl_seconds: int):
 
     return decorator
 
-
-
-def fetch_adoptable_dog_profile_links_paws(store_in_db: bool) -> set[str]:
-    """Fetch the adoptable dog profile links from PAWS.
+def fetch_adoptable_pet_profile_links_paws(store_in_db: bool) -> set[str]:
+    """Fetch adoptable pet profile links from PAWS.
 
     Returns:
         Set of profile URLs.
@@ -110,7 +111,7 @@ def fetch_adoptable_dog_profile_links_paws(store_in_db: bool) -> set[str]:
     cached_links = None
     if store_in_db:
         try:
-            cached_links = get_cached_links(DOG_SOURCE, CACHE_TIME, logger=logger)
+            cached_links = get_cached_links(SOURCE, CACHE_TIME, logger=logger)
         except Exception:
             cached_links = None
 
@@ -124,13 +125,13 @@ def fetch_adoptable_dog_profile_links_paws(store_in_db: bool) -> set[str]:
             sorted(
                 urljoin(PAWS_AVAILABLE_URL, a["href"])
                 for a in soup.select("a[href]")
-                if DOG_PROFILE_PATH_RE.match(a["href"])
+                if PET_PROFILE_PATH_RE.match(a["href"])
             )
         )
         logger.info(f"Fetched {len(links)} live links from PAWS.")
         if store_in_db:
             try:
-                store_cached_links(DOG_SOURCE, sorted(links), logger=logger)
+                store_cached_links(SOURCE, sorted(links), logger=logger)
                 logger.info(f"Stored {len(links)} links in Postgres cache.")
             except Exception:
                 logger.exception(f"Failed to store links in Postgres cache.")
@@ -140,7 +141,7 @@ def fetch_adoptable_dog_profile_links_paws(store_in_db: bool) -> set[str]:
         logger.exception(f"Live fetch failed; falling back to cached links.")
         # Fall back to last cached value even if stale or cache read previously failed.
         try:
-            cached_links = get_cached_links(DOG_SOURCE, CACHE_TIME * 365, logger=logger)
+            cached_links = get_cached_links(SOURCE, CACHE_TIME * 365, logger=logger)
         except Exception:
             cached_links = None
         if cached_links:
@@ -148,25 +149,34 @@ def fetch_adoptable_dog_profile_links_paws(store_in_db: bool) -> set[str]:
             return set(cached_links)
         raise
 
+def _parse_paws_species_and_id(url: str) -> tuple[str, int]:
+    """Extract species and pet id from a PAWS profile URL."""
+    match = re.search(r"/show([a-z]+)/(\d+)", url, flags=re.IGNORECASE)
+    if not match:
+        raise ValueError(f"Could not extract species/id from PAWS URL: {url}")
+    species = match.group(1).strip().lower()
+    pet_id = int(match.group(2))
+    return species, pet_id
+
 
 @cached(ttl_seconds=CACHE_TIME)
-def fetch_dog_profile_paws(url: str) -> DogProfile:
-    """Fetch and parse a single dog profile.
+def fetch_pet_profile_paws(url: str) -> PetProfile:
+    """Fetch and parse a single PAWS pet profile.
 
     Args:
-        url: Dog profile URL.
+        url: Pet profile URL.
 
     Returns:
-        Parsed DogProfile.
+        Parsed PetProfile.
     """
-    logger.info(f"Fetching dog profile: {url}")
+    logger.info(f"Fetching pet profile: {url}")
     soup = _get_soup(url)
-    dog_id_match = re.search(r"/showdog/(\d+)", url)
-    dog_id = int(dog_id_match.group(1))
+    species, pet_id = _parse_paws_species_and_id(url)
 
-    return DogProfile(
-        dog_id=dog_id,
+    return PetProfile(
+        dog_id=pet_id,
         url=url,
+        species=species,
         name=_get_name(soup),
         breed=_find_label_value(soup, "Breed"),
         gender=_find_label_value(soup, "Gender"),
@@ -179,4 +189,3 @@ def fetch_dog_profile_paws(url: str) -> DogProfile:
         description=_extract_description(soup),
         media=_extract_media(url, soup, image_prefixes=(CANTO_IMAGE_PREFIX,)),
     )
-   

@@ -22,6 +22,8 @@ from puppyping.pupswipe.config import (
     get_pupswipe_sources,
 )
 
+MAX_SPECIES_LENGTH = 40
+
 
 def ensure_app_schema(conn) -> None:
     """Create or update tables/indexes needed by the PupSwipe app."""
@@ -29,9 +31,26 @@ def ensure_app_schema(conn) -> None:
     with conn.cursor() as cur:
         cur.execute(
             """
-            CREATE TABLE IF NOT EXISTS dog_swipes (
+            DO $$
+            BEGIN
+                IF to_regclass('public.pet_swipes') IS NULL
+                   AND to_regclass('public.dog_swipes') IS NOT NULL THEN
+                    ALTER TABLE dog_swipes RENAME TO pet_swipes;
+                END IF;
+                IF to_regclass('public.pet_likes') IS NULL
+                   AND to_regclass('public.dog_likes') IS NOT NULL THEN
+                    ALTER TABLE dog_likes RENAME TO pet_likes;
+                END IF;
+            END
+            $$;
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS pet_swipes (
                 id BIGSERIAL PRIMARY KEY,
                 dog_id INTEGER NOT NULL,
+                species TEXT NOT NULL DEFAULT 'dog',
                 swipe TEXT NOT NULL CHECK (swipe IN ('left', 'right')),
                 source TEXT,
                 created_at_utc TIMESTAMPTZ NOT NULL,
@@ -56,13 +75,14 @@ def ensure_app_schema(conn) -> None:
         )
         cur.execute(
             """
-            CREATE TABLE IF NOT EXISTS dog_likes (
+            CREATE TABLE IF NOT EXISTS pet_likes (
                 id BIGSERIAL PRIMARY KEY,
                 user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 dog_id INTEGER NOT NULL,
+                species TEXT NOT NULL DEFAULT 'dog',
                 source TEXT,
                 created_at_utc TIMESTAMPTZ NOT NULL,
-                UNIQUE (user_id, dog_id)
+                UNIQUE (user_id, dog_id, species)
             );
             """
         )
@@ -80,8 +100,57 @@ def ensure_app_schema(conn) -> None:
         )
         cur.execute(
             """
-            ALTER TABLE dog_swipes
+            ALTER TABLE pet_swipes
             ADD COLUMN IF NOT EXISTS user_key TEXT;
+            """
+        )
+        cur.execute(
+            """
+            ALTER TABLE pet_swipes
+            ADD COLUMN IF NOT EXISTS species TEXT NOT NULL DEFAULT 'dog';
+            """
+        )
+        cur.execute(
+            """
+            ALTER TABLE pet_likes
+            ADD COLUMN IF NOT EXISTS species TEXT NOT NULL DEFAULT 'dog';
+            """
+        )
+        cur.execute(
+            """
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'dog_likes_user_id_dog_id_key'
+                ) THEN
+                    ALTER TABLE pet_likes
+                    DROP CONSTRAINT dog_likes_user_id_dog_id_key;
+                END IF;
+                IF EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'pet_likes_user_id_dog_id_key'
+                ) THEN
+                    ALTER TABLE pet_likes
+                    DROP CONSTRAINT pet_likes_user_id_dog_id_key;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'pet_likes_user_id_dog_id_species_key'
+                ) AND NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'dog_likes_user_id_dog_id_species_key'
+                ) THEN
+                    ALTER TABLE pet_likes
+                    ADD CONSTRAINT pet_likes_user_id_dog_id_species_key
+                    UNIQUE (user_id, dog_id, species);
+                END IF;
+            END
+            $$;
             """
         )
         cur.execute(
@@ -92,31 +161,31 @@ def ensure_app_schema(conn) -> None:
         )
         cur.execute(
             """
-            ALTER TABLE dog_swipes
+            ALTER TABLE pet_swipes
             ADD COLUMN IF NOT EXISTS user_ip TEXT;
             """
         )
         cur.execute(
             """
-            ALTER TABLE dog_swipes
+            ALTER TABLE pet_swipes
             ADD COLUMN IF NOT EXISTS user_agent TEXT;
             """
         )
         cur.execute(
             """
-            ALTER TABLE dog_swipes
+            ALTER TABLE pet_swipes
             ADD COLUMN IF NOT EXISTS accept_language TEXT;
             """
         )
         cur.execute(
             """
-            ALTER TABLE dog_swipes
+            ALTER TABLE pet_swipes
             ADD COLUMN IF NOT EXISTS screen_info JSONB;
             """
         )
         cur.execute(
             """
-            ALTER TABLE dog_swipes
+            ALTER TABLE pet_swipes
             ADD COLUMN IF NOT EXISTS user_id BIGINT;
             """
         )
@@ -127,10 +196,14 @@ def ensure_app_schema(conn) -> None:
                 IF NOT EXISTS (
                     SELECT 1
                     FROM pg_constraint
+                    WHERE conname = 'pet_swipes_user_id_fkey'
+                ) AND NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
                     WHERE conname = 'dog_swipes_user_id_fkey'
                 ) THEN
-                    ALTER TABLE dog_swipes
-                    ADD CONSTRAINT dog_swipes_user_id_fkey
+                    ALTER TABLE pet_swipes
+                    ADD CONSTRAINT pet_swipes_user_id_fkey
                     FOREIGN KEY (user_id) REFERENCES users(id)
                     ON DELETE SET NULL;
                 END IF;
@@ -140,38 +213,50 @@ def ensure_app_schema(conn) -> None:
         )
         cur.execute(
             """
-            CREATE INDEX IF NOT EXISTS idx_dog_swipes_created_at
-            ON dog_swipes (created_at_utc DESC);
+            CREATE INDEX IF NOT EXISTS idx_pet_swipes_created_at
+            ON pet_swipes (created_at_utc DESC);
             """
         )
         cur.execute(
             """
-            CREATE INDEX IF NOT EXISTS idx_dog_swipes_dog_id
-            ON dog_swipes (dog_id);
+            CREATE INDEX IF NOT EXISTS idx_pet_swipes_dog_id
+            ON pet_swipes (dog_id);
             """
         )
         cur.execute(
             """
-            CREATE INDEX IF NOT EXISTS idx_dog_swipes_user_key
-            ON dog_swipes (user_key);
+            CREATE INDEX IF NOT EXISTS idx_pet_swipes_species
+            ON pet_swipes (species);
             """
         )
         cur.execute(
             """
-            CREATE INDEX IF NOT EXISTS idx_dog_swipes_user_id
-            ON dog_swipes (user_id);
+            CREATE INDEX IF NOT EXISTS idx_pet_swipes_user_key
+            ON pet_swipes (user_key);
             """
         )
         cur.execute(
             """
-            CREATE INDEX IF NOT EXISTS idx_dog_likes_user_created
-            ON dog_likes (user_id, created_at_utc DESC);
+            CREATE INDEX IF NOT EXISTS idx_pet_swipes_user_id
+            ON pet_swipes (user_id);
             """
         )
         cur.execute(
             """
-            CREATE INDEX IF NOT EXISTS idx_dog_likes_dog_id
-            ON dog_likes (dog_id);
+            CREATE INDEX IF NOT EXISTS idx_pet_likes_user_created
+            ON pet_likes (user_id, created_at_utc DESC);
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_pet_likes_dog_id
+            ON pet_likes (dog_id);
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_pet_likes_species
+            ON pet_likes (species);
             """
         )
         cur.execute(
@@ -228,6 +313,21 @@ def _normalize_provider_filter(value: str | None, sources: tuple[str, ...]) -> s
     return ""
 
 
+def _normalize_species_filter(value: str | None) -> str:
+    text = " ".join((value or "").split()).strip().lower()
+    if not text:
+        return ""
+    return text[:MAX_SPECIES_LENGTH]
+
+
+def _normalize_species(value: str | None, default: str = "dog") -> str:
+    text = " ".join((value or "").split()).strip().lower()
+    normalized_default = (default or "dog").strip().lower() or "dog"
+    if not text:
+        return normalized_default
+    return text[:MAX_SPECIES_LENGTH]
+
+
 def _text_like_pattern(value: str) -> str:
     escaped = (
         value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -241,6 +341,7 @@ def fetch_puppies(
     breed_filter: str = "",
     name_filter: str = "",
     provider_filter: str = "",
+    species_filter: str = "",
     *,
     sources: tuple[str, ...] | None = None,
     connection_factory: Callable = get_connection,
@@ -251,14 +352,16 @@ def fetch_puppies(
     normalized_breed = _normalize_breed_filter(breed_filter)
     normalized_name = _normalize_name_filter(name_filter)
     normalized_provider = _normalize_provider_filter(provider_filter, active_sources)
+    normalized_species = _normalize_species_filter(species_filter)
     with connection_factory() as conn:
         ensure_schema_fn(conn)
         with conn.cursor() as cur:
             cur.execute(
                 """
                 WITH latest AS (
-                    SELECT DISTINCT ON (dog_id)
+                    SELECT DISTINCT ON (dog_id, species)
                         dog_id,
+                        species,
                         url,
                         name,
                         breed,
@@ -272,17 +375,17 @@ def fetch_puppies(
                         description,
                         media,
                         scraped_at_utc
-                    FROM dog_profiles
-                    ORDER BY dog_id, scraped_at_utc DESC
+                    FROM pet_profiles
+                    ORDER BY dog_id, species, scraped_at_utc DESC
                 ), active AS (
                     SELECT
                         latest.*,
-                        dog_status.source
+                        pet_status.source
                     FROM latest
-                    JOIN dog_status
-                      ON dog_status.link = latest.url
-                     AND dog_status.is_active = true
-                     AND dog_status.source = ANY(%s::text[])
+                    JOIN pet_status
+                      ON pet_status.link = latest.url
+                     AND pet_status.is_active = true
+                     AND pet_status.source = ANY(%s::text[])
                 )
                 SELECT *
                 FROM active
@@ -290,9 +393,10 @@ def fetch_puppies(
                   AND age_months IS NOT NULL
                   AND age_months < %s
                   AND (%s = '' OR source = %s)
+                  AND (%s = '' OR COALESCE(species, '') = %s)
                   AND (%s = '' OR COALESCE(breed, '') ILIKE %s ESCAPE '\\')
                   AND (%s = '' OR COALESCE(name, '') ILIKE %s ESCAPE '\\')
-                ORDER BY scraped_at_utc DESC, dog_id DESC
+                ORDER BY scraped_at_utc DESC, dog_id DESC, species ASC
                 LIMIT %s
                 OFFSET %s;
                 """,
@@ -301,6 +405,8 @@ def fetch_puppies(
                     MAX_PUPPY_AGE_MONTHS,
                     normalized_provider,
                     normalized_provider,
+                    normalized_species,
+                    normalized_species,
                     normalized_breed,
                     _text_like_pattern(normalized_breed),
                     normalized_name,
@@ -326,6 +432,7 @@ def count_puppies(
     breed_filter: str = "",
     name_filter: str = "",
     provider_filter: str = "",
+    species_filter: str = "",
     *,
     sources: tuple[str, ...] | None = None,
     connection_factory: Callable = get_connection,
@@ -336,36 +443,39 @@ def count_puppies(
     normalized_breed = _normalize_breed_filter(breed_filter)
     normalized_name = _normalize_name_filter(name_filter)
     normalized_provider = _normalize_provider_filter(provider_filter, active_sources)
+    normalized_species = _normalize_species_filter(species_filter)
     with connection_factory() as conn:
         ensure_schema_fn(conn)
         with conn.cursor() as cur:
             cur.execute(
                 """
                 WITH latest AS (
-                    SELECT DISTINCT ON (dog_id)
+                    SELECT DISTINCT ON (dog_id, species)
                         dog_id,
+                        species,
                         url,
                         name,
                         breed,
                         age_months,
                         status,
                         scraped_at_utc
-                    FROM dog_profiles
-                    ORDER BY dog_id, scraped_at_utc DESC
+                    FROM pet_profiles
+                    ORDER BY dog_id, species, scraped_at_utc DESC
                 )
                 SELECT count(*)
                 FROM latest
                 WHERE EXISTS (
                     SELECT 1
-                    FROM dog_status
-                    WHERE dog_status.link = latest.url
-                      AND dog_status.source = ANY(%s::text[])
-                      AND (%s = '' OR dog_status.source = %s)
-                      AND dog_status.is_active = true
+                    FROM pet_status
+                    WHERE pet_status.link = latest.url
+                      AND pet_status.source = ANY(%s::text[])
+                      AND (%s = '' OR pet_status.source = %s)
+                      AND pet_status.is_active = true
                 )
                   AND COALESCE(status, '') ILIKE 'Available%%'
                   AND age_months IS NOT NULL
                   AND age_months < %s
+                  AND (%s = '' OR COALESCE(species, '') = %s)
                   AND (%s = '' OR COALESCE(breed, '') ILIKE %s ESCAPE '\\')
                   AND (%s = '' OR COALESCE(name, '') ILIKE %s ESCAPE '\\');
                 """,
@@ -374,6 +484,8 @@ def count_puppies(
                     normalized_provider,
                     normalized_provider,
                     MAX_PUPPY_AGE_MONTHS,
+                    normalized_species,
+                    normalized_species,
                     normalized_breed,
                     _text_like_pattern(normalized_breed),
                     normalized_name,
@@ -387,6 +499,7 @@ def count_puppies(
 def store_swipe(
     dog_id: int,
     swipe: str,
+    species: str | None = None,
     source: str | None = None,
     user_id: int | None = None,
     user_key: str | None = None,
@@ -399,14 +512,16 @@ def store_swipe(
     ensure_schema_fn: Callable = ensure_app_schema,
 ) -> None:
     """Persist a swipe event for a dog."""
+    normalized_species = _normalize_species(species)
     with connection_factory() as conn:
         ensure_schema_fn(conn)
         with conn.cursor() as cur:
             screen_info_json = json.dumps(screen_info, sort_keys=True) if screen_info else None
             cur.execute(
                 """
-                INSERT INTO dog_swipes (
+                INSERT INTO pet_swipes (
                     dog_id,
+                    species,
                     swipe,
                     source,
                     created_at_utc,
@@ -417,10 +532,11 @@ def store_swipe(
                     accept_language,
                     screen_info
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb);
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb);
                 """,
                 (
                     dog_id,
+                    normalized_species,
                     swipe,
                     source,
                     datetime.now(timezone.utc),
@@ -436,14 +552,15 @@ def store_swipe(
                 if swipe == "right":
                     cur.execute(
                         """
-                        INSERT INTO dog_likes (
+                        INSERT INTO pet_likes (
                             user_id,
                             dog_id,
+                            species,
                             source,
                             created_at_utc
                         )
-                        VALUES (%s, %s, %s, %s)
-                        ON CONFLICT (user_id, dog_id)
+                        VALUES (%s, %s, %s, %s, %s)
+                        ON CONFLICT (user_id, dog_id, species)
                         DO UPDATE SET
                             source = EXCLUDED.source,
                             created_at_utc = EXCLUDED.created_at_utc;
@@ -451,6 +568,7 @@ def store_swipe(
                         (
                             user_id,
                             dog_id,
+                            normalized_species,
                             source,
                             datetime.now(timezone.utc),
                         ),
@@ -458,11 +576,12 @@ def store_swipe(
                 else:
                     cur.execute(
                         """
-                        DELETE FROM dog_likes
+                        DELETE FROM pet_likes
                         WHERE user_id = %s
-                          AND dog_id = %s;
+                          AND dog_id = %s
+                          AND species = %s;
                         """,
-                        (user_id, dog_id),
+                        (user_id, dog_id, normalized_species),
                     )
         conn.commit()
 
@@ -772,7 +891,7 @@ def count_liked_puppies(
             cur.execute(
                 """
                 SELECT count(*)
-                FROM dog_likes
+                FROM pet_likes
                 WHERE user_id = %s;
                 """,
                 (user_id,),
@@ -800,15 +919,16 @@ def fetch_liked_puppies(
             cur.execute(
                 """
                 WITH liked AS (
-                    SELECT dog_id, created_at_utc, source
-                    FROM dog_likes
+                    SELECT dog_id, species, created_at_utc, source
+                    FROM pet_likes
                     WHERE user_id = %s
-                    ORDER BY created_at_utc DESC, dog_id DESC
+                    ORDER BY created_at_utc DESC, dog_id DESC, species ASC
                     LIMIT %s
                     OFFSET %s
                 ), latest AS (
-                    SELECT DISTINCT ON (dog_id)
+                    SELECT DISTINCT ON (dog_id, species)
                         dog_id,
+                        species,
                         url,
                         name,
                         breed,
@@ -820,11 +940,12 @@ def fetch_liked_puppies(
                         description,
                         media,
                         scraped_at_utc
-                    FROM dog_profiles
-                    ORDER BY dog_id, scraped_at_utc DESC
+                    FROM pet_profiles
+                    ORDER BY dog_id, species, scraped_at_utc DESC
                 )
                 SELECT
                     liked.dog_id,
+                    liked.species,
                     liked.created_at_utc AS liked_at_utc,
                     COALESCE(status_pick.source, liked.source) AS source,
                     latest.url,
@@ -841,16 +962,17 @@ def fetch_liked_puppies(
                 FROM liked
                 LEFT JOIN latest
                   ON latest.dog_id = liked.dog_id
+                 AND latest.species = liked.species
                 LEFT JOIN LATERAL (
                     SELECT source
-                    FROM dog_status
-                    WHERE dog_status.link = latest.url
-                      AND dog_status.source = ANY(%s::text[])
-                    ORDER BY dog_status.is_active DESC, dog_status.source ASC
+                    FROM pet_status
+                    WHERE pet_status.link = latest.url
+                      AND pet_status.source = ANY(%s::text[])
+                    ORDER BY pet_status.is_active DESC, pet_status.source ASC
                     LIMIT 1
                 ) AS status_pick
                   ON true
-                ORDER BY liked.created_at_utc DESC, liked.dog_id DESC;
+                ORDER BY liked.created_at_utc DESC, liked.dog_id DESC, liked.species ASC;
                 """,
                 (user_id, page_limit, page_offset, list(active_sources)),
             )

@@ -13,21 +13,30 @@ from diskcache import Cache
 try:
     from .scrape_helpers import _clean, _extract_query_id, _get_soup, _parse_weight_lbs
     from ..db import get_cached_links, store_cached_links
-    from ..models import DogMedia, DogProfile
+    from ..models import PetMedia, PetProfile
 except ImportError:  # Allows running as a script
     from scrape_helpers import _clean, _extract_query_id, _get_soup, _parse_weight_lbs
     from db import get_cached_links, store_cached_links
-    from models import DogMedia, DogProfile
+    from models import PetMedia, PetProfile
 
 
 logger = logging.getLogger(__name__)
 
-DOG_SOURCE = "wright_way"
+SOURCE = "wright_way"
 START_URL = "https://wright-wayrescue.org/adoptable-pets"
 CACHE_TIME = 24 * 60 * 60  # 24 hours
 
 PROFILE_PATH_RE = re.compile(r"wsAdoptableAnimalDetails\.aspx", re.IGNORECASE)
-LABELS = ("Animal ID", "Breed", "Gender", "Age", "Weight", "Location", "Stage")
+LABELS = (
+    "Animal ID",
+    "Species",
+    "Breed",
+    "Gender",
+    "Age",
+    "Weight",
+    "Location",
+    "Stage",
+)
 DESCRIPTION_STOP_MARKERS = (
     "THANK YOU FOR YOUR INTEREST IN SAVING A LIFE!",
     "THERE ARE TWO WAYS TO ADOPT FROM WRIGHT-WAY RESCUE:",
@@ -156,7 +165,7 @@ def _clean_name(candidate: str) -> Optional[str]:
 
 
 def _extract_name(soup: BeautifulSoup, description: Optional[str]) -> Optional[str]:
-    """Extract a likely dog name from heading, title, or description.
+    """Extract a likely pet name from heading, title, or description.
 
     Args:
         soup: Parsed profile document.
@@ -255,7 +264,7 @@ def _parse_age_months(age_raw: Optional[str]) -> Optional[float]:
     return round(total, 2) if total > 0 else None
 
 
-def _extract_media(soup: BeautifulSoup, page_url: str) -> DogMedia:
+def _extract_media(soup: BeautifulSoup, page_url: str) -> PetMedia:
     """Collect image/video/embed URLs from a profile page.
 
     Args:
@@ -313,7 +322,7 @@ def _extract_media(soup: BeautifulSoup, page_url: str) -> DogMedia:
         if _is_petango_photo(image_url):
             images.add(image_url)
 
-    return DogMedia(images=sorted(images), videos=sorted(videos), embeds=sorted(embeds))
+    return PetMedia(images=sorted(images), videos=sorted(videos), embeds=sorted(embeds))
 
 
 def _fetch_live_links() -> set[str]:
@@ -337,8 +346,8 @@ def _fetch_live_links() -> set[str]:
     return set(sorted(links))
 
 
-def fetch_adoptable_dog_profile_links_wrightway(store_in_db: bool) -> set[str]:
-    """Fetch current Wright-Way dog profile links.
+def fetch_adoptable_pet_profile_links_wrightway(store_in_db: bool) -> set[str]:
+    """Fetch current Wright-Way pet profile links.
 
     Args:
         store_in_db: Whether to use and update Postgres cache.
@@ -349,7 +358,7 @@ def fetch_adoptable_dog_profile_links_wrightway(store_in_db: bool) -> set[str]:
     cached_links = None
     if store_in_db:
         try:
-            cached_links = get_cached_links(DOG_SOURCE, CACHE_TIME, logger=logger)
+            cached_links = get_cached_links(SOURCE, CACHE_TIME, logger=logger)
         except Exception:
             cached_links = None
 
@@ -362,7 +371,7 @@ def fetch_adoptable_dog_profile_links_wrightway(store_in_db: bool) -> set[str]:
         logger.info(f"Fetched {len(links)} live links from Wright-Way.")
         if store_in_db:
             try:
-                store_cached_links(DOG_SOURCE, sorted(links), logger=logger)
+                store_cached_links(SOURCE, sorted(links), logger=logger)
                 logger.info(f"Stored {len(links)} links in Postgres cache.")
             except Exception:
                 logger.exception("Failed to store links in Postgres cache.")
@@ -370,7 +379,7 @@ def fetch_adoptable_dog_profile_links_wrightway(store_in_db: bool) -> set[str]:
     except Exception:
         logger.exception("Live fetch failed; falling back to cached links.")
         try:
-            cached_links = get_cached_links(DOG_SOURCE, CACHE_TIME * 365, logger=logger)
+            cached_links = get_cached_links(SOURCE, CACHE_TIME * 365, logger=logger)
         except Exception:
             cached_links = None
         if cached_links:
@@ -379,34 +388,46 @@ def fetch_adoptable_dog_profile_links_wrightway(store_in_db: bool) -> set[str]:
         raise
 
 
+def fetch_adoptable_dog_profile_links_wrightway(store_in_db: bool) -> set[str]:
+    """Backward-compatible alias for fetch_adoptable_pet_profile_links_wrightway."""
+    return fetch_adoptable_pet_profile_links_wrightway(store_in_db=store_in_db)
+
+
+def _normalize_species(raw_value: Optional[str]) -> str:
+    """Normalize species text from provider pages."""
+    normalized = _clean(raw_value or "").lower()
+    return normalized or "dog"
+
+
 @cached(ttl_seconds=CACHE_TIME)
-def fetch_dog_profile_wrightway(url: str) -> DogProfile:
-    """Fetch and parse a single Wright-Way dog profile.
+def fetch_pet_profile_wrightway(url: str) -> PetProfile:
+    """Fetch and parse a single Wright-Way pet profile.
 
     Args:
         url: Profile URL.
 
     Returns:
-        Parsed DogProfile.
+        Parsed PetProfile.
     """
-    logger.info(f"Fetching dog profile: {url}")
+    logger.info(f"Fetching pet profile: {url}")
     soup = _get_soup(url)
 
     labels = _extract_label_values(soup)
     description = _extract_description(soup)
     age_raw = labels.get("Age")
 
-    dog_id = _extract_query_id(url)
+    pet_id = _extract_query_id(url)
     if "Animal ID" in labels:
         match = re.search(r"\d+", labels["Animal ID"])
         if match:
-            dog_id = int(match.group(0))
-    if dog_id is None:
-        raise ValueError(f"Missing dog_id for {url}")
+            pet_id = int(match.group(0))
+    if pet_id is None:
+        raise ValueError(f"Missing pet_id for {url}")
 
-    return DogProfile(
-        dog_id=dog_id,
+    return PetProfile(
+        dog_id=pet_id,
         url=url,
+        species=_normalize_species(labels.get("Species")),
         name=_extract_name(soup, description),
         breed=labels.get("Breed"),
         gender=labels.get("Gender"),
@@ -419,3 +440,8 @@ def fetch_dog_profile_wrightway(url: str) -> DogProfile:
         description=description,
         media=_extract_media(soup, url),
     )
+
+
+def fetch_dog_profile_wrightway(url: str) -> PetProfile:
+    """Backward-compatible alias for fetch_pet_profile_wrightway."""
+    return fetch_pet_profile_wrightway(url)

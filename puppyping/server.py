@@ -3,18 +3,28 @@ import os
 import logging
 from typing import Optional
 
-from .db import get_email_subscribers, store_dog_status, store_profiles_in_db
+from .db import (
+    get_email_subscribers,
+    store_pet_profiles_in_db,
+    store_pet_status,
+)
 from .email_utils import parse_email_list, sanitize_emails
 from .emailer import send_email
 from .providers import (
-    fetch_adoptable_dog_profile_links,
-    fetch_dog_profile,
+    fetch_adoptable_pet_profile_links,
+    fetch_pet_profile,
 )
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
 SOURCES = ("paws_chicago", "wright_way")
+
+# Backward-compatible names for tests/callers that still patch dog-prefixed symbols.
+store_dog_status = store_pet_status
+store_profiles_in_db = store_pet_profiles_in_db
+fetch_adoptable_dog_profile_links = fetch_adoptable_pet_profile_links
+fetch_dog_profile = fetch_pet_profile
 
 
 def __safe_less_than(a: Optional[float], b: float | int) -> bool:
@@ -37,17 +47,17 @@ def run(
     logger.info(f"Starting scrape run.")
 
     links_by_source = {
-        source: fetch_adoptable_dog_profile_links(source, store_in_db) for source in SOURCES
+        source: fetch_adoptable_pet_profile_links(source, store_in_db) for source in SOURCES
     }
     if store_in_db:
         for source, urls in links_by_source.items():
-            store_dog_status(source, list(urls), logger=logger)
+            store_pet_status(source, list(urls), logger=logger)
     profiles = []
     failed_profiles = 0
     for source, urls in links_by_source.items():
         for url in tqdm(urls, desc=f"Fetching profiles for {source}"):
             try:
-                profiles.append(fetch_dog_profile(source, url))
+                profiles.append(fetch_pet_profile(source, url))
             except Exception as exc:
                 failed_profiles += 1
                 logger.warning(f"Skipping profile due to fetch error for {url}: {exc}")
@@ -58,7 +68,7 @@ def run(
     filtered_profiles = [p for p in profiles if __safe_less_than(p.age_months, max_age)]
     if store_in_db:
         # Store all scraped profiles; email filtering happens separately.
-        store_profiles_in_db(profiles, logger=logger)
+        store_pet_profiles_in_db(profiles, logger=logger)
     if send_ping:
         configured = sanitize_emails(parse_email_list(os.environ.get("EMAILS_TO", "")))
         recipients = configured
