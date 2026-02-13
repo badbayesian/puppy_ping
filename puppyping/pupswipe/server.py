@@ -8,285 +8,65 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import hmac
 import json
 import os
 import random
-import secrets
-import smtplib
-from datetime import datetime, timedelta, timezone
-from decimal import Decimal
-from email.message import EmailMessage
+from datetime import datetime
 from html import escape
 from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
-from puppyping.db import add_email_subscriber, ensure_schema, get_connection
+from puppyping.db import add_email_subscriber, get_connection
 from puppyping.email_utils import is_valid_email, normalize_email
-
-APP_DIR = Path(__file__).resolve().parent
-DEFAULT_LIMIT = 40
-MAX_LIMIT = 200
-PAGE_SIZE = 1
-MAX_PUPPY_AGE_MONTHS = 8.0
-MAX_BREED_FILTER_LENGTH = 80
-MAX_NAME_FILTER_LENGTH = 80
-PASSWORD_MIN_LENGTH = 8
-PASSWORD_HASH_ITERATIONS = 200000
-PASSWORD_RESET_TOKEN_TTL_MINUTES = 30
-SESSION_COOKIE_NAME = "pupswipe_session"
-SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
-DEFAULT_SESSION_SECRET = "pupswipe-dev-session-secret-change-me"
-DEFAULT_PUPSWIPE_SOURCES = ("paws_chicago", "wright_way")
-PROVIDER_DISCLAIMER = (
-    "PuppyPing is not affiliated with any dog rescue, shelter, breeder, "
-    "or adoption provider."
+import puppyping.pupswipe.pages as pages
+from puppyping.pupswipe.auth import (
+    decode_session_value,
+    encode_session_value,
+    hash_password,
+    new_password_error,
+    normalize_next_path,
+    password_error,
+    password_reset_error,
+    password_reset_token_hash,
+    send_password_reset_email,
+    verify_password,
+)
+from puppyping.pupswipe.config import (
+    APP_DIR,
+    DEFAULT_LIMIT,
+    MAX_BREED_FILTER_LENGTH,
+    MAX_LIMIT,
+    MAX_NAME_FILTER_LENGTH,
+    PAGE_SIZE,
+    PASSWORD_MIN_LENGTH,
+    PROVIDER_DISCLAIMER,
+    SESSION_COOKIE_MAX_AGE_SECONDS,
+    SESSION_COOKIE_NAME,
+    get_pupswipe_sources,
+    provider_name,
+)
+from puppyping.pupswipe.repository import (
+    consume_password_reset_token as repo_consume_password_reset_token,
+    count_puppies as repo_count_puppies,
+    count_liked_puppies as repo_count_liked_puppies,
+    create_password_reset_token as repo_create_password_reset_token,
+    ensure_app_schema as repo_ensure_app_schema,
+    fetch_puppies as repo_fetch_puppies,
+    fetch_liked_puppies as repo_fetch_liked_puppies,
+    get_user_by_id as repo_get_user_by_id,
+    get_user_for_password_reset as repo_get_user_for_password_reset,
+    is_password_reset_token_valid as repo_is_password_reset_token_valid,
+    store_swipe as repo_store_swipe,
+    update_user_password as repo_update_user_password,
+    upsert_user as repo_upsert_user,
 )
 
 
-def _get_pupswipe_sources() -> tuple[str, ...]:
-    """Return feed sources for PupSwipe from env, with sensible defaults.
-
-    Returns:
-        Tuple of enabled source keys.
-    """
-    raw = os.environ.get("PUPSWIPE_SOURCES", ",".join(DEFAULT_PUPSWIPE_SOURCES))
-    parsed = [item.strip() for item in raw.split(",") if item.strip()]
-    deduped = tuple(dict.fromkeys(parsed))
-    return deduped or DEFAULT_PUPSWIPE_SOURCES
-
-
+_get_pupswipe_sources = get_pupswipe_sources
+_provider_name = provider_name
 PUPSWIPE_SOURCES = _get_pupswipe_sources()
-
-
-def _provider_name(source: str | None, profile_url: str | None = None) -> str:
-    """Return a human-readable provider label for a profile.
-
-    Args:
-        source: Optional normalized provider source key.
-        profile_url: Optional profile URL for fallback detection.
-
-    Returns:
-        Provider display name.
-    """
-    if source == "paws_chicago":
-        return "PAWS Chicago"
-    if source == "wright_way":
-        return "Wright-Way Rescue"
-
-    url = (profile_url or "").lower()
-    if "pawschicago.org" in url:
-        return "PAWS Chicago"
-    if "petango.com" in url or "wright-wayrescue.org" in url:
-        return "Wright-Way Rescue"
-    return "Adoption Provider"
-
-
-def _ensure_app_schema(conn) -> None:
-    """Create or update tables/indexes needed by the PupSwipe app.
-
-    Args:
-        conn: An open psycopg connection.
-
-    Returns:
-        None.
-    """
-    ensure_schema(conn)
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS dog_swipes (
-                id BIGSERIAL PRIMARY KEY,
-                dog_id INTEGER NOT NULL,
-                swipe TEXT NOT NULL CHECK (swipe IN ('left', 'right')),
-                source TEXT,
-                created_at_utc TIMESTAMPTZ NOT NULL,
-                user_key TEXT,
-                user_ip TEXT,
-                user_agent TEXT,
-                accept_language TEXT,
-                screen_info JSONB
-            );
-            """
-        )
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id BIGSERIAL PRIMARY KEY,
-                email TEXT NOT NULL UNIQUE,
-                password_hash TEXT,
-                created_at_utc TIMESTAMPTZ NOT NULL,
-                last_seen_at_utc TIMESTAMPTZ NOT NULL
-            );
-            """
-        )
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS dog_likes (
-                id BIGSERIAL PRIMARY KEY,
-                user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                dog_id INTEGER NOT NULL,
-                source TEXT,
-                created_at_utc TIMESTAMPTZ NOT NULL,
-                UNIQUE (user_id, dog_id)
-            );
-            """
-        )
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS password_reset_tokens (
-                id BIGSERIAL PRIMARY KEY,
-                user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                token_hash TEXT NOT NULL UNIQUE,
-                created_at_utc TIMESTAMPTZ NOT NULL,
-                expires_at_utc TIMESTAMPTZ NOT NULL,
-                used_at_utc TIMESTAMPTZ
-            );
-            """
-        )
-        cur.execute(
-            """
-            ALTER TABLE dog_swipes
-            ADD COLUMN IF NOT EXISTS user_key TEXT;
-            """
-        )
-        cur.execute(
-            """
-            ALTER TABLE users
-            ADD COLUMN IF NOT EXISTS password_hash TEXT;
-            """
-        )
-        cur.execute(
-            """
-            ALTER TABLE dog_swipes
-            ADD COLUMN IF NOT EXISTS user_ip TEXT;
-            """
-        )
-        cur.execute(
-            """
-            ALTER TABLE dog_swipes
-            ADD COLUMN IF NOT EXISTS user_agent TEXT;
-            """
-        )
-        cur.execute(
-            """
-            ALTER TABLE dog_swipes
-            ADD COLUMN IF NOT EXISTS accept_language TEXT;
-            """
-        )
-        cur.execute(
-            """
-            ALTER TABLE dog_swipes
-            ADD COLUMN IF NOT EXISTS screen_info JSONB;
-            """
-        )
-        cur.execute(
-            """
-            ALTER TABLE dog_swipes
-            ADD COLUMN IF NOT EXISTS user_id BIGINT;
-            """
-        )
-        cur.execute(
-            """
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1
-                    FROM pg_constraint
-                    WHERE conname = 'dog_swipes_user_id_fkey'
-                ) THEN
-                    ALTER TABLE dog_swipes
-                    ADD CONSTRAINT dog_swipes_user_id_fkey
-                    FOREIGN KEY (user_id) REFERENCES users(id)
-                    ON DELETE SET NULL;
-                END IF;
-            END
-            $$;
-            """
-        )
-        cur.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_dog_swipes_created_at
-            ON dog_swipes (created_at_utc DESC);
-            """
-        )
-        cur.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_dog_swipes_dog_id
-            ON dog_swipes (dog_id);
-            """
-        )
-        cur.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_dog_swipes_user_key
-            ON dog_swipes (user_key);
-            """
-        )
-        cur.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_dog_swipes_user_id
-            ON dog_swipes (user_id);
-            """
-        )
-        cur.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_dog_likes_user_created
-            ON dog_likes (user_id, created_at_utc DESC);
-            """
-        )
-        cur.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_dog_likes_dog_id
-            ON dog_likes (dog_id);
-            """
-        )
-        cur.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user
-            ON password_reset_tokens (user_id, created_at_utc DESC);
-            """
-        )
-        cur.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires
-            ON password_reset_tokens (expires_at_utc DESC);
-            """
-        )
-    conn.commit()
-
-
-def _coerce_json(value):
-    """Coerce non-JSON-native values into JSON-serializable values.
-
-    Args:
-        value: Any value that may need JSON coercion.
-
-    Returns:
-        A JSON-serializable representation of the input value.
-    """
-    if isinstance(value, Decimal):
-        return float(value)
-    if isinstance(value, datetime):
-        return value.isoformat()
-    return value
-
-
-def _jsonify(obj):
-    """Recursively convert an object graph to JSON-safe values.
-
-    Args:
-        obj: A primitive, list, or dict to transform.
-
-    Returns:
-        A recursively transformed object suitable for JSON serialization.
-    """
-    if isinstance(obj, dict):
-        return {k: _jsonify(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_jsonify(v) for v in obj]
-    return _coerce_json(obj)
+_ensure_app_schema = repo_ensure_app_schema
 
 
 def _normalize_breed_filter(value: str | None) -> str:
@@ -313,14 +93,6 @@ def _normalize_provider_filter(value: str | None) -> str:
     if candidate in PUPSWIPE_SOURCES:
         return candidate
     return ""
-
-
-def _text_like_pattern(value: str) -> str:
-    """Escape wildcard characters so text filters match literal text."""
-    escaped = (
-        value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    )
-    return f"%{escaped}%"
 
 
 def _filter_hidden_inputs(
@@ -368,91 +140,17 @@ def _fetch_puppies(
     name_filter: str = "",
     provider_filter: str = "",
 ) -> list[dict]:
-    """Load the latest available dog profiles ordered by recency.
-
-    Args:
-        limit: Maximum number of profiles to return.
-        offset: Number of rows to skip for pagination.
-        breed_filter: Optional case-insensitive breed text filter.
-        name_filter: Optional case-insensitive name text filter.
-        provider_filter: Optional provider source filter.
-
-    Returns:
-        A list of dog profile dictionaries.
-    """
-    normalized_breed = _normalize_breed_filter(breed_filter)
-    normalized_name = _normalize_name_filter(name_filter)
-    normalized_provider = _normalize_provider_filter(provider_filter)
-    with get_connection() as conn:
-        _ensure_app_schema(conn)
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                WITH latest AS (
-                    SELECT DISTINCT ON (dog_id)
-                        dog_id,
-                        url,
-                        name,
-                        breed,
-                        gender,
-                        age_raw,
-                        age_months,
-                        weight_lbs,
-                        location,
-                        status,
-                        ratings,
-                        description,
-                        media,
-                        scraped_at_utc
-                    FROM dog_profiles
-                    ORDER BY dog_id, scraped_at_utc DESC
-                ), active AS (
-                    SELECT
-                        latest.*,
-                        dog_status.source
-                    FROM latest
-                    JOIN dog_status
-                      ON dog_status.link = latest.url
-                     AND dog_status.is_active = true
-                     AND dog_status.source = ANY(%s::text[])
-                )
-                SELECT *
-                FROM active
-                WHERE COALESCE(status, '') ILIKE 'Available%%'
-                  AND age_months IS NOT NULL
-                  AND age_months < %s
-                  AND (%s = '' OR source = %s)
-                  AND (%s = '' OR COALESCE(breed, '') ILIKE %s ESCAPE '\\')
-                  AND (%s = '' OR COALESCE(name, '') ILIKE %s ESCAPE '\\')
-                ORDER BY scraped_at_utc DESC, dog_id DESC
-                LIMIT %s
-                OFFSET %s;
-                """,
-                (
-                    list(PUPSWIPE_SOURCES),
-                    MAX_PUPPY_AGE_MONTHS,
-                    normalized_provider,
-                    normalized_provider,
-                    normalized_breed,
-                    _text_like_pattern(normalized_breed),
-                    normalized_name,
-                    _text_like_pattern(normalized_name),
-                    limit,
-                    max(0, offset),
-                ),
-            )
-            rows = cur.fetchall()
-            columns = [col.name for col in cur.description]
-
-    puppies: list[dict] = []
-    for row in rows:
-        record = dict(zip(columns, row))
-        record = _jsonify(record)
-        media = record.get("media") or {}
-        images = media.get("images") or []
-        record["primary_image"] = images[0] if images else None
-        puppies.append(record)
-    return puppies
+    """Load the latest available dog profiles ordered by recency."""
+    return repo_fetch_puppies(
+        limit,
+        offset=offset,
+        breed_filter=breed_filter,
+        name_filter=name_filter,
+        provider_filter=provider_filter,
+        sources=PUPSWIPE_SOURCES,
+        connection_factory=get_connection,
+        ensure_schema_fn=_ensure_app_schema,
+    )
 
 
 def _count_puppies(
@@ -460,60 +158,15 @@ def _count_puppies(
     name_filter: str = "",
     provider_filter: str = "",
 ) -> int:
-    """Count latest dog profiles that are currently available.
-
-    Returns:
-        The number of available dogs based on each dog's latest record.
-    """
-    normalized_breed = _normalize_breed_filter(breed_filter)
-    normalized_name = _normalize_name_filter(name_filter)
-    normalized_provider = _normalize_provider_filter(provider_filter)
-    with get_connection() as conn:
-        _ensure_app_schema(conn)
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                WITH latest AS (
-                    SELECT DISTINCT ON (dog_id)
-                        dog_id,
-                        url,
-                        name,
-                        breed,
-                        age_months,
-                        status,
-                        scraped_at_utc
-                    FROM dog_profiles
-                    ORDER BY dog_id, scraped_at_utc DESC
-                )
-                SELECT count(*)
-                FROM latest
-                WHERE EXISTS (
-                    SELECT 1
-                    FROM dog_status
-                    WHERE dog_status.link = latest.url
-                      AND dog_status.source = ANY(%s::text[])
-                      AND (%s = '' OR dog_status.source = %s)
-                      AND dog_status.is_active = true
-                )
-                  AND COALESCE(status, '') ILIKE 'Available%%'
-                  AND age_months IS NOT NULL
-                  AND age_months < %s
-                  AND (%s = '' OR COALESCE(breed, '') ILIKE %s ESCAPE '\\')
-                  AND (%s = '' OR COALESCE(name, '') ILIKE %s ESCAPE '\\');
-                """,
-                (
-                    list(PUPSWIPE_SOURCES),
-                    normalized_provider,
-                    normalized_provider,
-                    MAX_PUPPY_AGE_MONTHS,
-                    normalized_breed,
-                    _text_like_pattern(normalized_breed),
-                    normalized_name,
-                    _text_like_pattern(normalized_name),
-                ),
-            )
-            row = cur.fetchone()
-            return int(row[0]) if row else 0
+    """Count latest dog profiles that are currently available."""
+    return repo_count_puppies(
+        breed_filter=breed_filter,
+        name_filter=name_filter,
+        provider_filter=provider_filter,
+        sources=PUPSWIPE_SOURCES,
+        connection_factory=get_connection,
+        ensure_schema_fn=_ensure_app_schema,
+    )
 
 
 def _store_swipe(
@@ -527,88 +180,20 @@ def _store_swipe(
     accept_language: str | None = None,
     screen_info: dict | None = None,
 ) -> None:
-    """Persist a swipe event for a dog.
-
-    Args:
-        dog_id: Dog identifier.
-        swipe: Swipe direction, either "left" or "right".
-        source: Optional source identifier (for example, "pupswipe").
-        user_id: Optional signed-in user id.
-        user_key: Derived per-user fingerprint key.
-        user_ip: Client IP address.
-        user_agent: Client user agent string.
-        accept_language: Client language header value.
-        screen_info: Optional screen/viewport metadata.
-
-    Returns:
-        None.
-    """
-    with get_connection() as conn:
-        _ensure_app_schema(conn)
-        with conn.cursor() as cur:
-            screen_info_json = json.dumps(screen_info, sort_keys=True) if screen_info else None
-            cur.execute(
-                """
-                INSERT INTO dog_swipes (
-                    dog_id,
-                    swipe,
-                    source,
-                    created_at_utc,
-                    user_id,
-                    user_key,
-                    user_ip,
-                    user_agent,
-                    accept_language,
-                    screen_info
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb);
-                """,
-                (
-                    dog_id,
-                    swipe,
-                    source,
-                    datetime.now(timezone.utc),
-                    user_id,
-                    user_key,
-                    user_ip,
-                    user_agent,
-                    accept_language,
-                    screen_info_json,
-                ),
-            )
-            if user_id is not None:
-                if swipe == "right":
-                    cur.execute(
-                        """
-                        INSERT INTO dog_likes (
-                            user_id,
-                            dog_id,
-                            source,
-                            created_at_utc
-                        )
-                        VALUES (%s, %s, %s, %s)
-                        ON CONFLICT (user_id, dog_id)
-                        DO UPDATE SET
-                            source = EXCLUDED.source,
-                            created_at_utc = EXCLUDED.created_at_utc;
-                        """,
-                        (
-                            user_id,
-                            dog_id,
-                            source,
-                            datetime.now(timezone.utc),
-                        ),
-                    )
-                else:
-                    cur.execute(
-                        """
-                        DELETE FROM dog_likes
-                        WHERE user_id = %s
-                          AND dog_id = %s;
-                        """,
-                        (user_id, dog_id),
-                    )
-        conn.commit()
+    """Persist a swipe event for a dog."""
+    repo_store_swipe(
+        dog_id=dog_id,
+        swipe=swipe,
+        source=source,
+        user_id=user_id,
+        user_key=user_key,
+        user_ip=user_ip,
+        user_agent=user_agent,
+        accept_language=accept_language,
+        screen_info=screen_info,
+        connection_factory=get_connection,
+        ensure_schema_fn=_ensure_app_schema,
+    )
 
 
 def _safe_int(value: str | None, default: int = 0) -> int:
@@ -651,128 +236,34 @@ def _is_valid_email(email: str) -> bool:
     return is_valid_email(email)
 
 
-def _password_error(password: str) -> str | None:
-    """Return a validation error for password input, if any."""
-    if len(password or "") < PASSWORD_MIN_LENGTH:
-        return f"Password must be at least {PASSWORD_MIN_LENGTH} characters."
-    return None
-
-
-def _new_password_error(new_password: str, confirm_password: str) -> str | None:
-    """Return validation error for new-password and confirmation inputs."""
-    validation_error = _password_error(new_password)
-    if validation_error:
-        return validation_error
-    if new_password != confirm_password:
-        return "New passwords do not match."
-    return None
-
-
-def _password_reset_error(
-    current_password: str,
-    new_password: str,
-    confirm_password: str,
-) -> str | None:
-    """Return validation error for reset-password form input, if any."""
-    if not current_password:
-        return "Enter your current password."
-    validation_error = _new_password_error(new_password, confirm_password)
-    if validation_error:
-        return validation_error
-    if current_password == new_password:
-        return "New password must be different from current password."
-    return None
-
-
-def _hash_password(password: str) -> str:
-    """Hash a password for storage using PBKDF2-HMAC-SHA256."""
-    salt = os.urandom(16).hex()
-    digest = hashlib.pbkdf2_hmac(
-        "sha256",
-        password.encode("utf-8"),
-        bytes.fromhex(salt),
-        PASSWORD_HASH_ITERATIONS,
-    ).hex()
-    return f"pbkdf2_sha256${PASSWORD_HASH_ITERATIONS}${salt}${digest}"
-
-
-def _verify_password(password: str, password_hash: str) -> bool:
-    """Verify plaintext password against a stored PBKDF2 hash."""
-    try:
-        algo, iterations_text, salt, expected_digest = password_hash.split("$", 3)
-        if algo != "pbkdf2_sha256":
-            return False
-        iterations = int(iterations_text)
-        if iterations < 1 or not salt or not expected_digest:
-            return False
-    except (ValueError, TypeError):
-        return False
-
-    actual_digest = hashlib.pbkdf2_hmac(
-        "sha256",
-        password.encode("utf-8"),
-        bytes.fromhex(salt),
-        iterations,
-    ).hex()
-    return hmac.compare_digest(actual_digest, expected_digest)
-
-
-def _password_reset_token_hash(token: str) -> str:
-    """Return a fixed hash for a reset token so raw tokens are not stored."""
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+_password_error = password_error
+_new_password_error = new_password_error
+_password_reset_error = password_reset_error
+_hash_password = hash_password
+_verify_password = verify_password
+_password_reset_token_hash = password_reset_token_hash
+_send_password_reset_email = send_password_reset_email
+_normalize_next_path = normalize_next_path
+_encode_session_value = encode_session_value
+_decode_session_value = decode_session_value
 
 
 def _get_user_for_password_reset(email: str) -> dict | None:
     """Load minimal user fields needed to issue a password reset."""
-    with get_connection() as conn:
-        _ensure_app_schema(conn)
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, email
-                FROM users
-                WHERE email = %s;
-                """,
-                (email,),
-            )
-            row = cur.fetchone()
-            columns = [col.name for col in cur.description] if row else []
-    if not row:
-        return None
-    return _jsonify(dict(zip(columns, row)))
+    return repo_get_user_for_password_reset(
+        email,
+        connection_factory=get_connection,
+        ensure_schema_fn=_ensure_app_schema,
+    )
 
 
 def _create_password_reset_token(user_id: int) -> tuple[str, datetime]:
     """Create and persist a one-time password-reset token."""
-    raw_token = secrets.token_urlsafe(32)
-    token_hash = _password_reset_token_hash(raw_token)
-    now = datetime.now(timezone.utc)
-    expires = now + timedelta(minutes=PASSWORD_RESET_TOKEN_TTL_MINUTES)
-    with get_connection() as conn:
-        _ensure_app_schema(conn)
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                DELETE FROM password_reset_tokens
-                WHERE user_id = %s
-                  AND (used_at_utc IS NOT NULL OR expires_at_utc < %s);
-                """,
-                (user_id, now),
-            )
-            cur.execute(
-                """
-                INSERT INTO password_reset_tokens (
-                    user_id,
-                    token_hash,
-                    created_at_utc,
-                    expires_at_utc
-                )
-                VALUES (%s, %s, %s, %s);
-                """,
-                (user_id, token_hash, now, expires),
-            )
-        conn.commit()
-    return raw_token, expires
+    return repo_create_password_reset_token(
+        user_id,
+        connection_factory=get_connection,
+        ensure_schema_fn=_ensure_app_schema,
+    )
 
 
 def _consume_password_reset_token(
@@ -784,406 +275,100 @@ def _consume_password_reset_token(
     Returns:
         The user id whose password was updated.
     """
-    token_hash = _password_reset_token_hash(token)
-    now = datetime.now(timezone.utc)
-    with get_connection() as conn:
-        _ensure_app_schema(conn)
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, user_id, expires_at_utc, used_at_utc
-                FROM password_reset_tokens
-                WHERE token_hash = %s
-                FOR UPDATE;
-                """,
-                (token_hash,),
-            )
-            row = cur.fetchone()
-            if not row:
-                raise ValueError("Reset link is invalid or expired.")
-            token_id, user_id, expires_at_utc, used_at_utc = row
-            if used_at_utc is not None or expires_at_utc is None or expires_at_utc <= now:
-                raise ValueError("Reset link is invalid or expired.")
-
-            cur.execute(
-                """
-                UPDATE users
-                SET password_hash = %s,
-                    last_seen_at_utc = %s
-                WHERE id = %s;
-                """,
-                (_hash_password(new_password), now, user_id),
-            )
-            cur.execute(
-                """
-                UPDATE password_reset_tokens
-                SET used_at_utc = %s
-                WHERE id = %s;
-                """,
-                (now, token_id),
-            )
-            cur.execute(
-                """
-                UPDATE password_reset_tokens
-                SET used_at_utc = %s
-                WHERE user_id = %s
-                  AND used_at_utc IS NULL
-                  AND id <> %s;
-                """,
-                (now, user_id, token_id),
-            )
-        conn.commit()
-    return int(user_id)
+    return repo_consume_password_reset_token(
+        token,
+        new_password,
+        connection_factory=get_connection,
+        ensure_schema_fn=_ensure_app_schema,
+    )
 
 
 def _is_password_reset_token_valid(token: str) -> bool:
     """Check whether reset token exists, is unused, and not expired."""
-    token_hash = _password_reset_token_hash(token)
-    now = datetime.now(timezone.utc)
-    with get_connection() as conn:
-        _ensure_app_schema(conn)
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT 1
-                FROM password_reset_tokens
-                WHERE token_hash = %s
-                  AND used_at_utc IS NULL
-                  AND expires_at_utc > %s
-                LIMIT 1;
-                """,
-                (token_hash, now),
-            )
-            row = cur.fetchone()
-    return bool(row)
-
-
-def _send_password_reset_email(email: str, reset_link: str) -> None:
-    """Send password reset link via SMTP credentials from environment."""
-    msg = EmailMessage()
-    msg["From"] = os.environ["EMAIL_FROM"]
-    msg["To"] = email
-    msg["Subject"] = "PupSwipe password reset"
-    msg.set_content(
-        "\n".join(
-            [
-                "You requested a password reset for PupSwipe.",
-                f"This link expires in {PASSWORD_RESET_TOKEN_TTL_MINUTES} minutes.",
-                "",
-                reset_link,
-                "",
-                "If you did not request this, you can ignore this email.",
-            ]
-        )
+    return repo_is_password_reset_token_valid(
+        token,
+        connection_factory=get_connection,
+        ensure_schema_fn=_ensure_app_schema,
     )
-    with smtplib.SMTP_SSL(os.environ["EMAIL_HOST"], int(os.environ["EMAIL_PORT"])) as smtp:
-        smtp.login(os.environ["EMAIL_USER"], os.environ["EMAIL_PASS"])
-        smtp.send_message(msg)
-
-
-def _normalize_next_path(value: str | None, default: str = "/") -> str:
-    """Normalize redirect targets to local absolute paths only."""
-    candidate = (value or "").strip()
-    if not candidate:
-        return default
-    parsed = urlparse(candidate)
-    if parsed.scheme or parsed.netloc:
-        return default
-    if not candidate.startswith("/") or candidate.startswith("//"):
-        return default
-    return candidate
-
-
-def _session_secret() -> str:
-    """Return the cookie-signing secret."""
-    secret = os.environ.get("PUPSWIPE_SESSION_SECRET", "").strip()
-    return secret or DEFAULT_SESSION_SECRET
-
-
-def _session_signature(user_id: int) -> str:
-    """Build an HMAC signature for a user-id session payload."""
-    payload = str(user_id).encode("utf-8")
-    secret = _session_secret().encode("utf-8")
-    return hmac.new(secret, payload, hashlib.sha256).hexdigest()
-
-
-def _encode_session_value(user_id: int) -> str:
-    """Encode signed session cookie contents."""
-    return f"{user_id}.{_session_signature(user_id)}"
-
-
-def _decode_session_value(raw_value: str | None) -> int | None:
-    """Decode and verify a signed session cookie value."""
-    value = (raw_value or "").strip()
-    if "." not in value:
-        return None
-    user_id_text, signature = value.split(".", 1)
-    if not user_id_text.isdigit():
-        return None
-    user_id = int(user_id_text)
-    if user_id <= 0:
-        return None
-    expected = _session_signature(user_id)
-    if not hmac.compare_digest(signature, expected):
-        return None
-    return user_id
 
 
 def _upsert_user(email: str, password: str) -> dict:
     """Create or authenticate a user row keyed by email."""
-    now = datetime.now(timezone.utc)
-    password_hash = _hash_password(password)
-    with get_connection() as conn:
-        _ensure_app_schema(conn)
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, email, password_hash, created_at_utc, last_seen_at_utc
-                FROM users
-                WHERE email = %s;
-                """,
-                (email,),
-            )
-            existing = cur.fetchone()
-            if existing:
-                user_id, _email, existing_hash, _created_at, _last_seen_at = existing
-                if existing_hash and not _verify_password(password, str(existing_hash)):
-                    raise ValueError("Incorrect email or password.")
-                if not existing_hash:
-                    cur.execute(
-                        """
-                        UPDATE users
-                        SET password_hash = %s,
-                            last_seen_at_utc = %s
-                        WHERE id = %s
-                        RETURNING id, email, created_at_utc, last_seen_at_utc;
-                        """,
-                        (password_hash, now, user_id),
-                    )
-                else:
-                    cur.execute(
-                        """
-                        UPDATE users
-                        SET last_seen_at_utc = %s
-                        WHERE id = %s
-                        RETURNING id, email, created_at_utc, last_seen_at_utc;
-                        """,
-                        (now, user_id),
-                    )
-            else:
-                cur.execute(
-                    """
-                    INSERT INTO users (
-                        email,
-                        password_hash,
-                        created_at_utc,
-                        last_seen_at_utc
-                    )
-                    VALUES (%s, %s, %s, %s)
-                    RETURNING id, email, created_at_utc, last_seen_at_utc;
-                    """,
-                    (email, password_hash, now, now),
-                )
-
-            row = cur.fetchone()
-            columns = [col.name for col in cur.description] if row else []
-        conn.commit()
-    return _jsonify(dict(zip(columns, row))) if row else {}
+    return repo_upsert_user(
+        email,
+        password,
+        connection_factory=get_connection,
+        ensure_schema_fn=_ensure_app_schema,
+    )
 
 
 def _get_user_by_id(user_id: int) -> dict | None:
     """Load a user row by id and update last-seen timestamp."""
-    now = datetime.now(timezone.utc)
-    with get_connection() as conn:
-        _ensure_app_schema(conn)
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE users
-                SET last_seen_at_utc = %s
-                WHERE id = %s
-                RETURNING id, email, created_at_utc, last_seen_at_utc;
-                """,
-                (now, user_id),
-            )
-            row = cur.fetchone()
-            columns = [col.name for col in cur.description] if row else []
-        conn.commit()
-    if not row:
-        return None
-    return _jsonify(dict(zip(columns, row)))
+    return repo_get_user_by_id(
+        user_id,
+        connection_factory=get_connection,
+        ensure_schema_fn=_ensure_app_schema,
+    )
 
 
 def _update_user_password(user_id: int, current_password: str, new_password: str) -> None:
     """Verify current password and replace it with a new password hash."""
-    now = datetime.now(timezone.utc)
-    with get_connection() as conn:
-        _ensure_app_schema(conn)
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT password_hash
-                FROM users
-                WHERE id = %s;
-                """,
-                (user_id,),
-            )
-            row = cur.fetchone()
-            if not row:
-                raise ValueError("Account not found.")
-            current_hash = str(row[0] or "")
-            if not current_hash:
-                raise ValueError("Password is not set for this account.")
-            if not _verify_password(current_password, current_hash):
-                raise ValueError("Current password is incorrect.")
-
-            cur.execute(
-                """
-                UPDATE users
-                SET password_hash = %s,
-                    last_seen_at_utc = %s
-                WHERE id = %s;
-                """,
-                (_hash_password(new_password), now, user_id),
-            )
-        conn.commit()
+    repo_update_user_password(
+        user_id,
+        current_password,
+        new_password,
+        connection_factory=get_connection,
+        ensure_schema_fn=_ensure_app_schema,
+    )
 
 
 def _count_liked_puppies(user_id: int) -> int:
     """Count likes for a given user."""
-    with get_connection() as conn:
-        _ensure_app_schema(conn)
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT count(*)
-                FROM dog_likes
-                WHERE user_id = %s;
-                """,
-                (user_id,),
-            )
-            row = cur.fetchone()
-    return int(row[0]) if row else 0
+    return repo_count_liked_puppies(
+        user_id,
+        connection_factory=get_connection,
+        ensure_schema_fn=_ensure_app_schema,
+    )
 
 
 def _fetch_liked_puppies(user_id: int, limit: int = 120, offset: int = 0) -> list[dict]:
     """Load a user's liked puppies ordered by most recently liked."""
-    page_limit = max(1, min(200, int(limit)))
-    page_offset = max(0, int(offset))
-    with get_connection() as conn:
-        _ensure_app_schema(conn)
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                WITH liked AS (
-                    SELECT dog_id, created_at_utc, source
-                    FROM dog_likes
-                    WHERE user_id = %s
-                    ORDER BY created_at_utc DESC, dog_id DESC
-                    LIMIT %s
-                    OFFSET %s
-                ), latest AS (
-                    SELECT DISTINCT ON (dog_id)
-                        dog_id,
-                        url,
-                        name,
-                        breed,
-                        gender,
-                        age_raw,
-                        age_months,
-                        location,
-                        status,
-                        description,
-                        media,
-                        scraped_at_utc
-                    FROM dog_profiles
-                    ORDER BY dog_id, scraped_at_utc DESC
-                )
-                SELECT
-                    liked.dog_id,
-                    liked.created_at_utc AS liked_at_utc,
-                    COALESCE(status_pick.source, liked.source) AS source,
-                    latest.url,
-                    latest.name,
-                    latest.breed,
-                    latest.gender,
-                    latest.age_raw,
-                    latest.age_months,
-                    latest.location,
-                    latest.status,
-                    latest.description,
-                    latest.media,
-                    latest.scraped_at_utc
-                FROM liked
-                LEFT JOIN latest
-                  ON latest.dog_id = liked.dog_id
-                LEFT JOIN LATERAL (
-                    SELECT source
-                    FROM dog_status
-                    WHERE dog_status.link = latest.url
-                      AND dog_status.source = ANY(%s::text[])
-                    ORDER BY dog_status.is_active DESC, dog_status.source ASC
-                    LIMIT 1
-                ) AS status_pick
-                  ON true
-                ORDER BY liked.created_at_utc DESC, liked.dog_id DESC;
-                """,
-                (user_id, page_limit, page_offset, list(PUPSWIPE_SOURCES)),
-            )
-            rows = cur.fetchall()
-            columns = [col.name for col in cur.description]
+    return repo_fetch_liked_puppies(
+        user_id=user_id,
+        limit=limit,
+        offset=offset,
+        sources=PUPSWIPE_SOURCES,
+        connection_factory=get_connection,
+        ensure_schema_fn=_ensure_app_schema,
+    )
 
-    liked_pups: list[dict] = []
-    for row in rows:
-        record = _jsonify(dict(zip(columns, row)))
-        media = record.get("media") or {}
-        images = media.get("images") or []
-        record["primary_image"] = images[0] if images else None
-        liked_pups.append(record)
-    return liked_pups
+
+def _sync_page_context() -> None:
+    """Bind server-level dependencies into the pages module."""
+    pages.random = random
+    pages._normalize_breed_filter = _normalize_breed_filter
+    pages._normalize_name_filter = _normalize_name_filter
+    pages._normalize_provider_filter = _normalize_provider_filter
+    pages._filter_hidden_inputs = _filter_hidden_inputs
+    pages._count_puppies = _count_puppies
+    pages._fetch_puppies = _fetch_puppies
+    pages._provider_name = _provider_name
+    pages._safe_int = _safe_int
+    pages._normalize_next_path = _normalize_next_path
+    pages.PUPSWIPE_SOURCES = PUPSWIPE_SOURCES
+    pages.PAGE_SIZE = PAGE_SIZE
+    pages.MAX_BREED_FILTER_LENGTH = MAX_BREED_FILTER_LENGTH
+    pages.MAX_NAME_FILTER_LENGTH = MAX_NAME_FILTER_LENGTH
+    pages.PASSWORD_MIN_LENGTH = PASSWORD_MIN_LENGTH
+    pages.PROVIDER_DISCLAIMER = PROVIDER_DISCLAIMER
 
 
 def _get_primary_image(pup: dict) -> str | None:
-    """Extract the primary image URL from a dog record.
-
-    Args:
-        pup: Dog profile dictionary.
-
-    Returns:
-        The primary image URL if present, otherwise ``None``.
-    """
-    image = pup.get("primary_image")
-    if isinstance(image, str) and image.strip():
-        return image
-    media = pup.get("media") or {}
-    images = media.get("images") if isinstance(media, dict) else None
-    if isinstance(images, list) and images:
-        first = images[0]
-        if isinstance(first, str) and first.strip():
-            return first
-    return None
+    return pages._get_primary_image(pup)
 
 
 def _get_photo_urls(pup: dict) -> list[str]:
-    """Collect unique photo URLs for a dog record.
-
-    Args:
-        pup: Dog profile dictionary.
-
-    Returns:
-        An ordered list of unique image URLs.
-    """
-    urls: list[str] = []
-    primary = _get_primary_image(pup)
-    if primary:
-        urls.append(primary)
-    media = pup.get("media") or {}
-    images = media.get("images") if isinstance(media, dict) else None
-    if isinstance(images, list):
-        for item in images:
-            if isinstance(item, str) and item.strip() and item not in urls:
-                urls.append(item)
-    return urls
+    return pages._get_photo_urls(pup)
 
 
 def _render_page(
@@ -1196,441 +381,17 @@ def _render_page(
     provider_filter: str = "",
     signed_in_email: str | None = None,
 ) -> bytes:
-    """Render the main HTML page.
-
-    Args:
-        offset: Current dog index offset.
-        message: Optional info/error message to display.
-        photo_index: Selected image index within the current dog carousel.
-        randomize: Whether to pick a random dog from the current result set.
-        breed_filter: Optional breed filter text.
-        name_filter: Optional name filter text.
-        provider_filter: Optional provider source filter text.
-        signed_in_email: Optional signed-in email for account actions.
-
-    Returns:
-        UTF-8 encoded HTML document bytes.
-    """
-    normalized_breed = _normalize_breed_filter(breed_filter)
-    normalized_name = _normalize_name_filter(name_filter)
-    normalized_provider = _normalize_provider_filter(provider_filter)
-    escaped_breed = escape(normalized_breed)
-    escaped_name = escape(normalized_name)
-    filter_hidden_inputs = _filter_hidden_inputs(
-        breed_filter=normalized_breed,
-        name_filter=normalized_name,
-        provider_filter=normalized_provider,
+    _sync_page_context()
+    return pages._render_page(
+        offset=offset,
+        message=message,
+        photo_index=photo_index,
+        randomize=randomize,
+        breed_filter=breed_filter,
+        name_filter=name_filter,
+        provider_filter=provider_filter,
+        signed_in_email=signed_in_email,
     )
-    escaped_signed_in_email = escape(signed_in_email) if signed_in_email else ""
-    if signed_in_email:
-        account_actions_html = f"""
-          <div class="account-actions">
-            <span class="account-email">{escaped_signed_in_email}</span>
-            <a class="profile-link" href="/likes">Liked pups</a>
-            <a class="profile-link" href="/reset-password">Reset password</a>
-            <form class="inline-form" method="post" action="/signout">
-              <input type="hidden" name="next" value="/" />
-              <button class="btn subtle" type="submit">Sign out</button>
-            </form>
-          </div>
-        """
-    else:
-        signin_query = urlencode({"next": "/"})
-        account_actions_html = (
-            f'<a class="profile-link account-link" href="/signin?{signin_query}">'
-            "Sign in to save likes"
-            "</a>"
-        )
-
-    try:
-        total = _count_puppies(
-            breed_filter=normalized_breed,
-            name_filter=normalized_name,
-            provider_filter=normalized_provider,
-        )
-        if total > 0 and offset >= total:
-            offset = 0
-        if total > 1 and randomize:
-            current_offset = offset
-            random_offset = random.randrange(total - 1)
-            if random_offset >= current_offset:
-                random_offset += 1
-            offset = random_offset
-        elif total == 1 and randomize:
-            offset = 0
-        puppies = _fetch_puppies(
-            PAGE_SIZE,
-            offset=offset,
-            breed_filter=normalized_breed,
-            name_filter=normalized_name,
-            provider_filter=normalized_provider,
-        )
-    except Exception as exc:
-        error_html = f"""<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PupSwipe | PuppyPing</title>
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
-  <body>
-    <div class="app">
-      <header class="topbar">
-        <div class="brand">
-          <div class="brand-mark">PS</div>
-          <div>
-            <h1>PupSwipe</h1>
-            <p>By PuppyPing</p>
-          </div>
-        </div>
-        {account_actions_html}
-      </header>
-      <main>
-        <section class="stack">
-          <div class="state state-error">Failed to load puppies: {escape(str(exc))}</div>
-        </section>
-      </main>
-    </div>
-  </body>
-</html>"""
-        return error_html.encode("utf-8")
-
-    stats = f"{max(total - offset, 0)} left of {total}" if total else "No puppies found"
-    active_filters: list[str] = []
-    if normalized_breed:
-        active_filters.append(f"Breed: {normalized_breed}")
-    if normalized_name:
-        active_filters.append(f"Name: {normalized_name}")
-    if normalized_provider:
-        active_filters.append(f"Provider: {_provider_name(normalized_provider)}")
-    if active_filters:
-        stats = f"{stats} | Filters: {', '.join(active_filters)}"
-
-    clear_filter_html = ""
-    if active_filters:
-        clear_query = urlencode({"offset": "0"})
-        clear_filter_html = f'<a class="clear-filter" href="/?{clear_query}">Clear</a>'
-
-    provider_options = ['<option value="">All providers</option>']
-    for source in PUPSWIPE_SOURCES:
-        selected_attr = " selected" if source == normalized_provider else ""
-        provider_options.append(
-            f'<option value="{escape(source)}"{selected_attr}>{escape(_provider_name(source))}</option>'
-        )
-    provider_options_html = "".join(provider_options)
-
-    filter_bar = f"""
-      <section class="filter-strip" aria-label="Pup filters">
-        <form class="breed-filter-form" method="get" action="/">
-          <input type="hidden" name="offset" value="0" />
-          <div class="filter-field">
-            <label for="breed-filter">Breed</label>
-            <input
-              id="breed-filter"
-              name="breed"
-              type="text"
-              value="{escaped_breed}"
-              placeholder="e.g. Labrador"
-              maxlength="{MAX_BREED_FILTER_LENGTH}"
-            />
-          </div>
-          <div class="filter-field">
-            <label for="name-filter">Name</label>
-            <input
-              id="name-filter"
-              name="name"
-              type="text"
-              value="{escaped_name}"
-              placeholder="e.g. Nova"
-              maxlength="{MAX_NAME_FILTER_LENGTH}"
-            />
-          </div>
-          <div class="filter-field">
-            <label for="provider-filter">Provider</label>
-            <select id="provider-filter" name="provider">
-              {provider_options_html}
-            </select>
-          </div>
-          <button class="btn filter" type="submit">Filter</button>
-          {clear_filter_html}
-        </form>
-      </section>
-    """
-
-    if not puppies:
-        empty_msg = (
-            message
-            or (
-                "No puppies match those filters. Try different filters."
-                if active_filters
-                else "No puppies to show yet. Run scraper and refresh."
-            )
-        )
-        no_data = f"""<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PupSwipe | PuppyPing</title>
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
-  <body>
-    <div class="app">
-      <header class="topbar">
-        <div class="brand">
-          <div class="brand-mark">PS</div>
-          <div>
-            <h1>PupSwipe</h1>
-            <p>By PuppyPing</p>
-          </div>
-        </div>
-        <div class="stats">{escape(stats)}</div>
-        {account_actions_html}
-      </header>
-      <main>
-        <section class="stack">
-          <div class="state state-empty">{escape(empty_msg)}</div>
-        </section>
-        <section class="controls">
-          <form method="get" action="/">
-            <input type="hidden" name="offset" value="{offset}" />
-            <input type="hidden" name="random" value="1" />
-            {filter_hidden_inputs}
-            <button class="btn refresh" type="submit">Random</button>
-          </form>
-        </section>
-        {filter_bar}
-        <section class="ecosystem" aria-label="PuppyPing ecosystem">
-          <h3>Get PuppyPing Alerts</h3>
-          <p class="ecosystem-copy">
-            PupSwipe runs inside the PuppyPing ecosystem. Join the PuppyPing email list for new puppy updates.
-          </p>
-          <p class="ecosystem-copy">
-            {escape(PROVIDER_DISCLAIMER)}
-          </p>
-          <form class="subscribe-form" method="post" action="/subscribe">
-            <input type="hidden" name="offset" value="{offset}" />
-            <input type="hidden" name="photo" value="0" />
-            {filter_hidden_inputs}
-            <label class="subscribe-label" for="subscribe-email-empty">Email for PuppyPing alerts</label>
-            <div class="subscribe-row">
-              <input
-                id="subscribe-email-empty"
-                name="email"
-                type="email"
-                inputmode="email"
-                autocomplete="email"
-                placeholder="you@example.com"
-                required
-              />
-              <button class="btn subscribe" type="submit">Join</button>
-            </div>
-          </form>
-        </section>
-      </main>
-    </div>
-  </body>
-</html>"""
-        return no_data.encode("utf-8")
-
-    pup = puppies[0]
-    dog_id = _safe_int(str(pup.get("dog_id")), 0)
-
-    name = escape(str(pup.get("name") or "Unnamed pup"))
-    age_raw = escape(str(pup.get("age_raw") or "Age unknown"))
-    breed = escape(str(pup.get("breed") or "Unknown breed"))
-    gender = escape(str(pup.get("gender") or "Unknown gender"))
-    location = escape(str(pup.get("location") or "Unknown location"))
-    status = escape(str(pup.get("status") or "Status unknown"))
-    description = escape(
-        str(
-            pup.get("description")
-            or "No description available yet. Open profile for full details."
-        )
-    )
-    raw_profile_url = str(pup.get("url") or "").strip()
-    profile_url = escape(raw_profile_url or "#")
-    source_key = str(pup.get("source")) if pup.get("source") is not None else None
-    provider_name = escape(_provider_name(source_key, raw_profile_url))
-    if raw_profile_url:
-        provider_link_html = (
-            f'<a class="profile-link card-profile-link" href="{profile_url}" '
-            f'target="_blank" rel="noopener">View on {provider_name}</a>'
-        )
-    else:
-        provider_link_html = f'<span class="provider-missing">{provider_name}</span>'
-
-    photo_urls = _get_photo_urls(pup)
-    photo_count = len(photo_urls)
-    if photo_count > 0:
-        selected_photo = photo_urls[photo_index % photo_count]
-        image_block = (
-            f'<img src="{escape(selected_photo)}" alt="{name} photo" referrerpolicy="no-referrer" />'
-        )
-    else:
-        initials = "".join(part[0] for part in name.split()[:2]).upper() or "PUP"
-        image_block = f'<div class="photo-fallback">{escape(initials)}</div>'
-    current_photo_index = photo_index % photo_count if photo_count > 0 else 0
-
-    carousel_controls = ""
-    if photo_count > 1:
-        prev_photo = (photo_index - 1) % photo_count
-        next_photo = (photo_index + 1) % photo_count
-        current_index = photo_index % photo_count
-        dots = "".join(
-            f'<span class="carousel-dot{" is-active" if idx == current_index else ""}" aria-hidden="true"></span>'
-            for idx in range(photo_count)
-        )
-        carousel_controls = f"""
-            <div class="carousel-controls" aria-label="Photo carousel controls">
-              <form method="get" action="/">
-                <input type="hidden" name="offset" value="{offset}" />
-                <input type="hidden" name="photo" value="{prev_photo}" />
-                {filter_hidden_inputs}
-                <button class="carousel-btn" type="submit" aria-label="Previous photo">Prev</button>
-              </form>
-              <div class="carousel-middle">
-                <div class="carousel-meta">{current_index + 1} / {photo_count}</div>
-                <div class="carousel-dots" aria-hidden="true">{dots}</div>
-              </div>
-              <form method="get" action="/">
-                <input type="hidden" name="offset" value="{offset}" />
-                <input type="hidden" name="photo" value="{next_photo}" />
-                {filter_hidden_inputs}
-                <button class="carousel-btn" type="submit" aria-label="Next photo">Next</button>
-              </form>
-            </div>
-        """
-
-    info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
-    page_html = f"""<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PupSwipe | PuppyPing</title>
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
-  <body>
-    <div class="background">
-      <div class="glow glow-a"></div>
-      <div class="glow glow-b"></div>
-      <div class="grid"></div>
-    </div>
-
-    <div class="app">
-      <header class="topbar">
-        <div class="brand">
-          <div class="brand-mark">PS</div>
-          <div>
-            <h1>PupSwipe</h1>
-            <p>By PuppyPing</p>
-          </div>
-        </div>
-        <div class="topbar-meta">
-          <div class="stats">{escape(stats)}</div>
-          <a class="profile-link top-profile-link" href="{profile_url}" target="_blank" rel="noopener">Open profile</a>
-        </div>
-        {account_actions_html}
-      </header>
-
-      {info_msg}
-
-      <main>
-        <section class="stack">
-          <article id="swipe-card" class="card enter" data-swipe-threshold="110">
-            <div class="card-photo">
-              {image_block}
-              <div class="swipe-indicator like">Like</div>
-              <div class="swipe-indicator nope">Nope</div>
-            </div>
-            <div class="card-body">
-              <div class="card-title">
-                <h2>{name}</h2>
-                <span class="age-pill">{age_raw}</span>
-              </div>
-              <div class="card-facts">
-                <span>{breed}</span>
-                <span>{gender}</span>
-                <span>{location}</span>
-              </div>
-              <div class="badges">
-                <span class="badge">{status}</span>
-                <span class="badge badge-provider">{provider_name}</span>
-              </div>
-              {carousel_controls}
-              <div class="description-wrap">
-                <h3 class="description-label">Description</h3>
-                <p class="description">{description}</p>
-              </div>
-              <div class="provider-panel">
-                <span class="provider-label">Provider link</span>
-                {provider_link_html}
-              </div>
-            </div>
-          </article>
-        </section>
-
-        <section class="controls" aria-label="Swipe controls">
-          <form id="swipe-nope-form" method="post" action="/swipe">
-            <input type="hidden" name="dog_id" value="{dog_id}" />
-            <input type="hidden" name="offset" value="{offset}" />
-            {filter_hidden_inputs}
-            <input type="hidden" name="swipe" value="left" />
-            <button class="btn nope" type="submit">Nope</button>
-          </form>
-          <form method="get" action="/">
-            <input type="hidden" name="offset" value="{offset}" />
-            <input type="hidden" name="random" value="1" />
-            {filter_hidden_inputs}
-            <button class="btn refresh" type="submit">Random</button>
-          </form>
-          <form id="swipe-like-form" method="post" action="/swipe">
-            <input type="hidden" name="dog_id" value="{dog_id}" />
-            <input type="hidden" name="offset" value="{offset}" />
-            {filter_hidden_inputs}
-            <input type="hidden" name="swipe" value="right" />
-            <button class="btn like" type="submit">Like</button>
-          </form>
-        </section>
-      </main>
-
-      {filter_bar}
-
-      <section class="ecosystem" aria-label="PuppyPing ecosystem">
-        <h3>Get PuppyPing Alerts</h3>
-        <p class="ecosystem-copy">
-          PupSwipe is part of the PuppyPing ecosystem. Join PuppyPing email alerts to get fresh puppy updates.
-        </p>
-        <p class="ecosystem-copy">
-          {escape(PROVIDER_DISCLAIMER)}
-        </p>
-        <form class="subscribe-form" method="post" action="/subscribe">
-          <input type="hidden" name="offset" value="{offset}" />
-          <input type="hidden" name="photo" value="{current_photo_index}" />
-          {filter_hidden_inputs}
-          <label class="subscribe-label" for="subscribe-email">Email for PuppyPing alerts</label>
-          <div class="subscribe-row">
-            <input
-              id="subscribe-email"
-              name="email"
-              type="email"
-              inputmode="email"
-              autocomplete="email"
-              placeholder="you@example.com"
-              required
-            />
-            <button class="btn subscribe" type="submit">Join</button>
-          </div>
-        </form>
-      </section>
-
-    </div>
-    <script src="/swipe.js"></script>
-  </body>
-</html>"""
-    return page_html.encode("utf-8")
 
 
 def _render_signin_page(
@@ -1639,299 +400,50 @@ def _render_signin_page(
     email_value: str = "",
     signed_in_email: str | None = None,
 ) -> bytes:
-    """Render email sign-in page."""
-    safe_next = _normalize_next_path(next_path, "/likes")
-    escaped_email = escape(email_value)
-    info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
-
-    if signed_in_email:
-        account_line = f"""
-          <p class="auth-copy">
-            You are currently signed in as <strong>{escape(signed_in_email)}</strong>.
-            <a class="profile-link" href="/likes">View liked puppies</a>
-          </p>
-        """
-    else:
-        account_line = (
-            '<p class="auth-copy">Use email + password. First sign-in creates your account.</p>'
-        )
-
-    page_html = f"""<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Sign In | PupSwipe</title>
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
-  <body class="signin-page">
-    <div class="background">
-      <div class="glow glow-a"></div>
-      <div class="glow glow-b"></div>
-      <div class="grid"></div>
-    </div>
-    <div class="app">
-      <header class="topbar">
-        <div class="brand">
-          <div class="brand-mark">PS</div>
-          <div>
-            <h1>PupSwipe</h1>
-            <p>Sign in to save your likes</p>
-          </div>
-        </div>
-      </header>
-      {info_msg}
-      <main>
-        <section class="auth-shell">
-          <article class="auth-card">
-            <h2>Sign in</h2>
-            {account_line}
-            <form class="auth-form" method="post" action="/signin">
-              <input type="hidden" name="next" value="{escape(safe_next)}" />
-              <label for="signin-email">Email address</label>
-              <input
-                id="signin-email"
-                name="email"
-                type="email"
-                inputmode="email"
-                autocomplete="email"
-                placeholder="you@example.com"
-                value="{escaped_email}"
-                required
-              />
-              <label for="signin-password">Password</label>
-              <input
-                id="signin-password"
-                name="password"
-                type="password"
-                autocomplete="current-password"
-                minlength="{PASSWORD_MIN_LENGTH}"
-                required
-              />
-              <button class="btn like" type="submit">Continue</button>
-            </form>
-            <div class="auth-links">
-              <a class="profile-link" href="/forgot-password">Forgot password?</a>
-              <a class="profile-link" href="/">Back to PupSwipe</a>
-            </div>
-          </article>
-        </section>
-      </main>
-    </div>
-  </body>
-</html>"""
-    return page_html.encode("utf-8")
+    _sync_page_context()
+    return pages._render_signin_page(
+        message=message,
+        next_path=next_path,
+        email_value=email_value,
+        signed_in_email=signed_in_email,
+    )
 
 
 def _render_forgot_password_page(
     message: str | None = None,
     email_value: str = "",
 ) -> bytes:
-    """Render forgot-password request page."""
-    info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
-    escaped_email = escape(email_value)
-    page_html = f"""<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Forgot Password | PupSwipe</title>
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
-  <body>
-    <div class="background">
-      <div class="glow glow-a"></div>
-      <div class="glow glow-b"></div>
-      <div class="grid"></div>
-    </div>
-    <div class="app">
-      <header class="topbar">
-        <div class="brand">
-          <div class="brand-mark">PS</div>
-          <div>
-            <h1>PupSwipe</h1>
-            <p>Forgot password</p>
-          </div>
-        </div>
-      </header>
-      {info_msg}
-      <main>
-        <section class="auth-shell">
-          <article class="auth-card">
-            <h2>Reset via email</h2>
-            <p class="auth-copy">Enter your account email and we will send a reset link.</p>
-            <form class="auth-form" method="post" action="/forgot-password">
-              <label for="forgot-email">Email address</label>
-              <input
-                id="forgot-email"
-                name="email"
-                type="email"
-                inputmode="email"
-                autocomplete="email"
-                placeholder="you@example.com"
-                value="{escaped_email}"
-                required
-              />
-              <button class="btn like" type="submit">Send reset link</button>
-            </form>
-            <a class="profile-link" href="/signin">Back to sign in</a>
-          </article>
-        </section>
-      </main>
-    </div>
-  </body>
-</html>"""
-    return page_html.encode("utf-8")
+    _sync_page_context()
+    return pages._render_forgot_password_page(
+        message=message,
+        email_value=email_value,
+    )
 
 
 def _render_forgot_password_reset_page(
     token: str,
     message: str | None = None,
 ) -> bytes:
-    """Render reset-password-by-token page."""
-    info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
-    page_html = f"""<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Set New Password | PupSwipe</title>
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
-  <body>
-    <div class="background">
-      <div class="glow glow-a"></div>
-      <div class="glow glow-b"></div>
-      <div class="grid"></div>
-    </div>
-    <div class="app">
-      <header class="topbar">
-        <div class="brand">
-          <div class="brand-mark">PS</div>
-          <div>
-            <h1>PupSwipe</h1>
-            <p>Set new password</p>
-          </div>
-        </div>
-      </header>
-      {info_msg}
-      <main>
-        <section class="auth-shell">
-          <article class="auth-card">
-            <h2>Choose a new password</h2>
-            <form class="auth-form" method="post" action="/forgot-password/reset">
-              <input type="hidden" name="token" value="{escape(token)}" />
-              <label for="new-password">New password</label>
-              <input
-                id="new-password"
-                name="new_password"
-                type="password"
-                autocomplete="new-password"
-                minlength="{PASSWORD_MIN_LENGTH}"
-                required
-              />
-              <label for="confirm-password">Confirm new password</label>
-              <input
-                id="confirm-password"
-                name="confirm_password"
-                type="password"
-                autocomplete="new-password"
-                minlength="{PASSWORD_MIN_LENGTH}"
-                required
-              />
-              <button class="btn like" type="submit">Set password</button>
-            </form>
-            <a class="profile-link" href="/signin">Back to sign in</a>
-          </article>
-        </section>
-      </main>
-    </div>
-  </body>
-</html>"""
-    return page_html.encode("utf-8")
+    _sync_page_context()
+    return pages._render_forgot_password_reset_page(
+        token=token,
+        message=message,
+    )
 
 
 def _render_reset_password_page(
     signed_in_email: str,
     message: str | None = None,
 ) -> bytes:
-    """Render reset-password page for a signed-in user."""
-    info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
-    page_html = f"""<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Reset Password | PupSwipe</title>
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
-  <body>
-    <div class="background">
-      <div class="glow glow-a"></div>
-      <div class="glow glow-b"></div>
-      <div class="grid"></div>
-    </div>
-    <div class="app">
-      <header class="topbar">
-        <div class="brand">
-          <div class="brand-mark">PS</div>
-          <div>
-            <h1>PupSwipe</h1>
-            <p>Reset your password</p>
-          </div>
-        </div>
-      </header>
-      {info_msg}
-      <main>
-        <section class="auth-shell">
-          <article class="auth-card">
-            <h2>Reset password</h2>
-            <p class="auth-copy">Signed in as <strong>{escape(signed_in_email)}</strong></p>
-            <form class="auth-form" method="post" action="/reset-password">
-              <label for="current-password">Current password</label>
-              <input
-                id="current-password"
-                name="current_password"
-                type="password"
-                autocomplete="current-password"
-                required
-              />
-              <label for="new-password">New password</label>
-              <input
-                id="new-password"
-                name="new_password"
-                type="password"
-                autocomplete="new-password"
-                minlength="{PASSWORD_MIN_LENGTH}"
-                required
-              />
-              <label for="confirm-password">Confirm new password</label>
-              <input
-                id="confirm-password"
-                name="confirm_password"
-                type="password"
-                autocomplete="new-password"
-                minlength="{PASSWORD_MIN_LENGTH}"
-                required
-              />
-              <button class="btn like" type="submit">Update password</button>
-            </form>
-            <a class="profile-link" href="/likes">Back to liked puppies</a>
-          </article>
-        </section>
-      </main>
-    </div>
-  </body>
-</html>"""
-    return page_html.encode("utf-8")
+    _sync_page_context()
+    return pages._render_reset_password_page(
+        signed_in_email=signed_in_email,
+        message=message,
+    )
 
 
 def _format_liked_time(value) -> str:
-    """Format liked timestamp for simple display."""
-    text = str(value or "").strip()
-    if not text:
-        return "Unknown time"
-    return text.replace("T", " ").replace("+00:00", " UTC")
+    return pages._format_liked_time(value)
 
 
 def _render_likes_page(
@@ -1940,111 +452,13 @@ def _render_likes_page(
     total_likes: int,
     message: str | None = None,
 ) -> bytes:
-    """Render page showing the signed-in user's liked puppies."""
-    info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
-    cards_html = ""
-    for pup in puppies:
-        dog_id = _safe_int(str(pup.get("dog_id")), 0)
-        name = escape(str(pup.get("name") or "Unnamed pup"))
-        breed = escape(str(pup.get("breed") or "Unknown breed"))
-        age_raw = escape(str(pup.get("age_raw") or "Age unknown"))
-        location = escape(str(pup.get("location") or "Unknown location"))
-        status = escape(str(pup.get("status") or "Status unknown"))
-        liked_at = escape(_format_liked_time(pup.get("liked_at_utc")))
-        raw_profile_url = str(pup.get("url") or "").strip()
-        profile_url = escape(raw_profile_url or "#")
-        source_key = str(pup.get("source")) if pup.get("source") is not None else None
-        provider_name = escape(_provider_name(source_key, raw_profile_url))
-        photo_url = _get_primary_image(pup)
-        if photo_url:
-            image_html = (
-                f'<img src="{escape(photo_url)}" alt="{name} photo" referrerpolicy="no-referrer" />'
-            )
-        else:
-            initials = "".join(part[0] for part in str(name).split()[:2]).upper() or "PUP"
-            image_html = f'<div class="photo-fallback">{escape(initials)}</div>'
-
-        if raw_profile_url:
-            link_html = (
-                f'<a class="profile-link" href="{profile_url}" target="_blank" rel="noopener">'
-                f"Open on {provider_name}</a>"
-            )
-        else:
-            link_html = f'<span class="provider-missing">{provider_name}</span>'
-
-        cards_html += f"""
-          <article class="liked-card">
-            <div class="liked-photo">{image_html}</div>
-            <div class="liked-body">
-              <h3>{name}</h3>
-              <p class="liked-meta">{breed} · {age_raw} · {location}</p>
-              <div class="badges">
-                <span class="badge">{status}</span>
-                <span class="badge badge-provider">{provider_name}</span>
-              </div>
-              <p class="liked-time">Liked at {liked_at}</p>
-              <p class="liked-id">Dog ID: {dog_id}</p>
-              {link_html}
-            </div>
-          </article>
-        """
-
-    if not cards_html:
-        cards_html = """
-          <div class="state state-empty">
-            No liked puppies yet. Swipe right on PupSwipe while signed in.
-          </div>
-        """
-
-    page_html = f"""<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Liked Puppies | PupSwipe</title>
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
-  <body>
-    <div class="background">
-      <div class="glow glow-a"></div>
-      <div class="glow glow-b"></div>
-      <div class="grid"></div>
-    </div>
-    <div class="app">
-      <header class="topbar">
-        <div class="brand">
-          <div class="brand-mark">PS</div>
-          <div>
-            <h1>Liked Puppies</h1>
-            <p>{escape(email)}</p>
-          </div>
-        </div>
-        <div class="topbar-meta">
-          <div class="stats">{total_likes} liked</div>
-          <a class="profile-link top-profile-link" href="/">Back to PupSwipe</a>
-        </div>
-        <div class="account-actions">
-          <span class="account-email">{escape(email)}</span>
-          <a class="profile-link" href="/reset-password">Reset password</a>
-          <form class="inline-form" method="post" action="/signout">
-            <input type="hidden" name="next" value="/signin" />
-            <button class="btn subtle" type="submit">Sign out</button>
-          </form>
-        </div>
-      </header>
-      {info_msg}
-      <main>
-        <section class="likes-shell">
-          <div class="liked-grid">
-            {cards_html}
-          </div>
-        </section>
-      </main>
-    </div>
-  </body>
-</html>"""
-    return page_html.encode("utf-8")
-
+    _sync_page_context()
+    return pages._render_likes_page(
+        email=email,
+        puppies=puppies,
+        total_likes=total_likes,
+        message=message,
+    )
 
 class AppHandler(SimpleHTTPRequestHandler):
     """HTTP handler for PupSwipe API and server-rendered pages."""

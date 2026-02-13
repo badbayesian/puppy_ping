@@ -88,7 +88,13 @@ Compose layering rules:
 
 - `puppyping-scraper` orchestrates scrape runs, status updates, profile storage, and email dispatch.
 - Scraper runtime: container runs cron in foreground and schedules scrape jobs at container start and daily at `1:00 PM` (`America/Chicago`).
-- `puppyping-pupswipe` serves the web UI and API, and records swipe events and subscriptions.
+- `puppyping-pupswipe` serves the web UI and API for swiping, account auth, likes, and password reset flows.
+- PupSwipe module split:
+  - `puppyping/pupswipe/server.py` handles HTTP routing/controller wiring.
+  - `puppyping/pupswipe/config.py` defines constants and source/provider config helpers.
+  - `puppyping/pupswipe/auth.py` handles password validation/hashing, session cookie encode/decode, and reset-email utilities.
+  - `puppyping/pupswipe/repository.py` handles schema setup and DB read/write operations.
+  - `puppyping/pupswipe/pages.py` handles server-rendered HTML output.
 - `puppyping-postgres` is the shared system of record for scraped profiles, link status, swipes, and subscribers.
 - `puppyping-pgadmin` is an admin UI for inspecting and managing the Postgres database.
 
@@ -209,12 +215,12 @@ Schedule daily backup at 1:30 AM with 30-day retention:
   - `swipe: "right"` = like
   - `swipe: "left"` = nope
 - `GET /api/health` checks DB connectivity.
-- `GET /signin` renders email + password sign-in (Gmail/Outlook/any valid email).
-- `GET /likes` shows liked puppies for the signed-in user.
-- `GET /reset-password` allows signed-in users to update their password.
+- `GET /signin` renders email + password sign-in; the first successful sign-in creates the account and later sign-ins authenticate it.
+- `GET /likes` shows session-scoped liked puppies for the signed-in user.
+- `GET /reset-password` runs the signed-in user password change flow.
 - `GET /forgot-password` requests an email reset link.
-- `GET /forgot-password/reset?token=...` renders token-based password reset.
-- Forgot-password emails use SMTP env vars and optional `PUPSWIPE_PUBLIC_URL` for link generation.
+- `GET /forgot-password/reset?token=...` renders token-based password reset (email-delivered, one-time token, expiry enforced).
+- Forgot-password emails rely on SMTP env vars and `PUPSWIPE_PUBLIC_URL` for reset-link generation to the public host.
 
 Example payload:
 
@@ -231,10 +237,10 @@ Example payload:
 - `dog_profiles`: historical scraped snapshots.
 - `cached_links`: per-link cache with source + active flags.
 - `dog_status`: current active links by source.
-- `dog_swipes`: PupSwipe left/right interactions + basic client metadata.
-- `users`: signed-in PupSwipe users (email keyed).
-- `dog_likes`: per-user liked dogs keyed by `user_id`.
-- `password_reset_tokens`: one-time reset tokens with expiry and used-at tracking.
+- `dog_swipes`: PupSwipe left/right interactions with optional `user_id` plus client metadata.
+- `users`: signed-in PupSwipe users keyed by unique `email`.
+- `dog_likes`: per-user liked dogs with uniqueness on (`user_id`, `dog_id`).
+- `password_reset_tokens`: hashed one-time tokens with `expires_at_utc` and `used_at_utc`.
 - `email_subscribers`: PuppyPing alert subscriptions.
 
 ## Legal Note in App
@@ -246,7 +252,11 @@ PupSwipe displays a disclaimer that PuppyPing is not affiliated with any rescue,
 - `puppyping/server.py`: single scrape cycle + persistence + email dispatch.
 - `puppyping/providers/`: source-specific scraping logic.
 - `puppyping/db.py`: Postgres schema and DB operations.
-- `puppyping/pupswipe/server.py`: PupSwipe web server + API.
+- `puppyping/pupswipe/server.py`: PupSwipe HTTP routes and request orchestration.
+- `puppyping/pupswipe/config.py`: PupSwipe constants and source/provider config helpers.
+- `puppyping/pupswipe/auth.py`: PupSwipe auth/session/password-reset utilities.
+- `puppyping/pupswipe/repository.py`: PupSwipe schema + data access layer.
+- `puppyping/pupswipe/pages.py`: PupSwipe server-rendered page templates.
 - `puppyping/models.py`: core dataclasses.
 - `docker/puppyping.cron`: production cron schedule for scraper runs.
 - `docker/run_scrape_cron.sh`: cron task runner that executes one scrape cycle.
