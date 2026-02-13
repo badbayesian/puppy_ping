@@ -828,7 +828,8 @@ main {
   color: var(--ink-soft);
 }
 
-.auth-form input[type="email"] {
+.auth-form input[type="email"],
+.auth-form input[type="password"] {
   width: 100%;
   min-height: 46px;
   border-radius: 11px;
@@ -923,6 +924,40 @@ main {
 @media (max-width: 640px) {
   body {
     padding-bottom: calc(94px + env(safe-area-inset-bottom));
+  }
+
+  .signin-page .auth-shell {
+    width: min(98vw, 520px);
+  }
+
+  .signin-page .auth-card {
+    gap: 10px;
+    padding: 14px 14px 16px;
+  }
+
+  .signin-page .auth-card h2 {
+    font-size: 1.28rem;
+  }
+
+  .signin-page .auth-form {
+    gap: 6px;
+  }
+
+  .signin-page .auth-copy {
+    font-size: 0.9rem;
+    line-height: 1.35;
+  }
+
+  .signin-page .auth-links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 12px;
+  }
+
+  .signin-page .auth-links .profile-link {
+    font-size: 0.84rem;
   }
 
   .topbar {

@@ -12,8 +12,11 @@ import hmac
 import json
 import os
 import random
-from datetime import datetime, timezone
+import secrets
+import smtplib
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from email.message import EmailMessage
 from html import escape
 from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -30,6 +33,9 @@ PAGE_SIZE = 1
 MAX_PUPPY_AGE_MONTHS = 8.0
 MAX_BREED_FILTER_LENGTH = 80
 MAX_NAME_FILTER_LENGTH = 80
+PASSWORD_MIN_LENGTH = 8
+PASSWORD_HASH_ITERATIONS = 200000
+PASSWORD_RESET_TOKEN_TTL_MINUTES = 30
 SESSION_COOKIE_NAME = "pupswipe_session"
 SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 DEFAULT_SESSION_SECRET = "pupswipe-dev-session-secret-change-me"
@@ -110,6 +116,7 @@ def _ensure_app_schema(conn) -> None:
             CREATE TABLE IF NOT EXISTS users (
                 id BIGSERIAL PRIMARY KEY,
                 email TEXT NOT NULL UNIQUE,
+                password_hash TEXT,
                 created_at_utc TIMESTAMPTZ NOT NULL,
                 last_seen_at_utc TIMESTAMPTZ NOT NULL
             );
@@ -129,8 +136,26 @@ def _ensure_app_schema(conn) -> None:
         )
         cur.execute(
             """
+            CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                id BIGSERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                token_hash TEXT NOT NULL UNIQUE,
+                created_at_utc TIMESTAMPTZ NOT NULL,
+                expires_at_utc TIMESTAMPTZ NOT NULL,
+                used_at_utc TIMESTAMPTZ
+            );
+            """
+        )
+        cur.execute(
+            """
             ALTER TABLE dog_swipes
             ADD COLUMN IF NOT EXISTS user_key TEXT;
+            """
+        )
+        cur.execute(
+            """
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS password_hash TEXT;
             """
         )
         cur.execute(
@@ -215,6 +240,18 @@ def _ensure_app_schema(conn) -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_dog_likes_dog_id
             ON dog_likes (dog_id);
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user
+            ON password_reset_tokens (user_id, created_at_utc DESC);
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires
+            ON password_reset_tokens (expires_at_utc DESC);
             """
         )
     conn.commit()
@@ -614,6 +651,236 @@ def _is_valid_email(email: str) -> bool:
     return is_valid_email(email)
 
 
+def _password_error(password: str) -> str | None:
+    """Return a validation error for password input, if any."""
+    if len(password or "") < PASSWORD_MIN_LENGTH:
+        return f"Password must be at least {PASSWORD_MIN_LENGTH} characters."
+    return None
+
+
+def _new_password_error(new_password: str, confirm_password: str) -> str | None:
+    """Return validation error for new-password and confirmation inputs."""
+    validation_error = _password_error(new_password)
+    if validation_error:
+        return validation_error
+    if new_password != confirm_password:
+        return "New passwords do not match."
+    return None
+
+
+def _password_reset_error(
+    current_password: str,
+    new_password: str,
+    confirm_password: str,
+) -> str | None:
+    """Return validation error for reset-password form input, if any."""
+    if not current_password:
+        return "Enter your current password."
+    validation_error = _new_password_error(new_password, confirm_password)
+    if validation_error:
+        return validation_error
+    if current_password == new_password:
+        return "New password must be different from current password."
+    return None
+
+
+def _hash_password(password: str) -> str:
+    """Hash a password for storage using PBKDF2-HMAC-SHA256."""
+    salt = os.urandom(16).hex()
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        bytes.fromhex(salt),
+        PASSWORD_HASH_ITERATIONS,
+    ).hex()
+    return f"pbkdf2_sha256${PASSWORD_HASH_ITERATIONS}${salt}${digest}"
+
+
+def _verify_password(password: str, password_hash: str) -> bool:
+    """Verify plaintext password against a stored PBKDF2 hash."""
+    try:
+        algo, iterations_text, salt, expected_digest = password_hash.split("$", 3)
+        if algo != "pbkdf2_sha256":
+            return False
+        iterations = int(iterations_text)
+        if iterations < 1 or not salt or not expected_digest:
+            return False
+    except (ValueError, TypeError):
+        return False
+
+    actual_digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        bytes.fromhex(salt),
+        iterations,
+    ).hex()
+    return hmac.compare_digest(actual_digest, expected_digest)
+
+
+def _password_reset_token_hash(token: str) -> str:
+    """Return a fixed hash for a reset token so raw tokens are not stored."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _get_user_for_password_reset(email: str) -> dict | None:
+    """Load minimal user fields needed to issue a password reset."""
+    with get_connection() as conn:
+        _ensure_app_schema(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, email
+                FROM users
+                WHERE email = %s;
+                """,
+                (email,),
+            )
+            row = cur.fetchone()
+            columns = [col.name for col in cur.description] if row else []
+    if not row:
+        return None
+    return _jsonify(dict(zip(columns, row)))
+
+
+def _create_password_reset_token(user_id: int) -> tuple[str, datetime]:
+    """Create and persist a one-time password-reset token."""
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = _password_reset_token_hash(raw_token)
+    now = datetime.now(timezone.utc)
+    expires = now + timedelta(minutes=PASSWORD_RESET_TOKEN_TTL_MINUTES)
+    with get_connection() as conn:
+        _ensure_app_schema(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM password_reset_tokens
+                WHERE user_id = %s
+                  AND (used_at_utc IS NOT NULL OR expires_at_utc < %s);
+                """,
+                (user_id, now),
+            )
+            cur.execute(
+                """
+                INSERT INTO password_reset_tokens (
+                    user_id,
+                    token_hash,
+                    created_at_utc,
+                    expires_at_utc
+                )
+                VALUES (%s, %s, %s, %s);
+                """,
+                (user_id, token_hash, now, expires),
+            )
+        conn.commit()
+    return raw_token, expires
+
+
+def _consume_password_reset_token(
+    token: str,
+    new_password: str,
+) -> int:
+    """Consume reset token and update user password.
+
+    Returns:
+        The user id whose password was updated.
+    """
+    token_hash = _password_reset_token_hash(token)
+    now = datetime.now(timezone.utc)
+    with get_connection() as conn:
+        _ensure_app_schema(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, user_id, expires_at_utc, used_at_utc
+                FROM password_reset_tokens
+                WHERE token_hash = %s
+                FOR UPDATE;
+                """,
+                (token_hash,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise ValueError("Reset link is invalid or expired.")
+            token_id, user_id, expires_at_utc, used_at_utc = row
+            if used_at_utc is not None or expires_at_utc is None or expires_at_utc <= now:
+                raise ValueError("Reset link is invalid or expired.")
+
+            cur.execute(
+                """
+                UPDATE users
+                SET password_hash = %s,
+                    last_seen_at_utc = %s
+                WHERE id = %s;
+                """,
+                (_hash_password(new_password), now, user_id),
+            )
+            cur.execute(
+                """
+                UPDATE password_reset_tokens
+                SET used_at_utc = %s
+                WHERE id = %s;
+                """,
+                (now, token_id),
+            )
+            cur.execute(
+                """
+                UPDATE password_reset_tokens
+                SET used_at_utc = %s
+                WHERE user_id = %s
+                  AND used_at_utc IS NULL
+                  AND id <> %s;
+                """,
+                (now, user_id, token_id),
+            )
+        conn.commit()
+    return int(user_id)
+
+
+def _is_password_reset_token_valid(token: str) -> bool:
+    """Check whether reset token exists, is unused, and not expired."""
+    token_hash = _password_reset_token_hash(token)
+    now = datetime.now(timezone.utc)
+    with get_connection() as conn:
+        _ensure_app_schema(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                FROM password_reset_tokens
+                WHERE token_hash = %s
+                  AND used_at_utc IS NULL
+                  AND expires_at_utc > %s
+                LIMIT 1;
+                """,
+                (token_hash, now),
+            )
+            row = cur.fetchone()
+    return bool(row)
+
+
+def _send_password_reset_email(email: str, reset_link: str) -> None:
+    """Send password reset link via SMTP credentials from environment."""
+    msg = EmailMessage()
+    msg["From"] = os.environ["EMAIL_FROM"]
+    msg["To"] = email
+    msg["Subject"] = "PupSwipe password reset"
+    msg.set_content(
+        "\n".join(
+            [
+                "You requested a password reset for PupSwipe.",
+                f"This link expires in {PASSWORD_RESET_TOKEN_TTL_MINUTES} minutes.",
+                "",
+                reset_link,
+                "",
+                "If you did not request this, you can ignore this email.",
+            ]
+        )
+    )
+    with smtplib.SMTP_SSL(os.environ["EMAIL_HOST"], int(os.environ["EMAIL_PORT"])) as smtp:
+        smtp.login(os.environ["EMAIL_USER"], os.environ["EMAIL_PASS"])
+        smtp.send_message(msg)
+
+
 def _normalize_next_path(value: str | None, default: str = "/") -> str:
     """Normalize redirect targets to local absolute paths only."""
     candidate = (value or "").strip()
@@ -662,24 +929,64 @@ def _decode_session_value(raw_value: str | None) -> int | None:
     return user_id
 
 
-def _upsert_user(email: str) -> dict:
-    """Create or update a user row keyed by email."""
+def _upsert_user(email: str, password: str) -> dict:
+    """Create or authenticate a user row keyed by email."""
     now = datetime.now(timezone.utc)
+    password_hash = _hash_password(password)
     with get_connection() as conn:
         _ensure_app_schema(conn)
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO users (email, created_at_utc, last_seen_at_utc)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (email)
-                DO UPDATE SET last_seen_at_utc = EXCLUDED.last_seen_at_utc
-                RETURNING id, email, created_at_utc, last_seen_at_utc;
+                SELECT id, email, password_hash, created_at_utc, last_seen_at_utc
+                FROM users
+                WHERE email = %s;
                 """,
-                (email, now, now),
+                (email,),
             )
+            existing = cur.fetchone()
+            if existing:
+                user_id, _email, existing_hash, _created_at, _last_seen_at = existing
+                if existing_hash and not _verify_password(password, str(existing_hash)):
+                    raise ValueError("Incorrect email or password.")
+                if not existing_hash:
+                    cur.execute(
+                        """
+                        UPDATE users
+                        SET password_hash = %s,
+                            last_seen_at_utc = %s
+                        WHERE id = %s
+                        RETURNING id, email, created_at_utc, last_seen_at_utc;
+                        """,
+                        (password_hash, now, user_id),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE users
+                        SET last_seen_at_utc = %s
+                        WHERE id = %s
+                        RETURNING id, email, created_at_utc, last_seen_at_utc;
+                        """,
+                        (now, user_id),
+                    )
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO users (
+                        email,
+                        password_hash,
+                        created_at_utc,
+                        last_seen_at_utc
+                    )
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING id, email, created_at_utc, last_seen_at_utc;
+                    """,
+                    (email, password_hash, now, now),
+                )
+
             row = cur.fetchone()
-            columns = [col.name for col in cur.description]
+            columns = [col.name for col in cur.description] if row else []
         conn.commit()
     return _jsonify(dict(zip(columns, row))) if row else {}
 
@@ -705,6 +1012,41 @@ def _get_user_by_id(user_id: int) -> dict | None:
     if not row:
         return None
     return _jsonify(dict(zip(columns, row)))
+
+
+def _update_user_password(user_id: int, current_password: str, new_password: str) -> None:
+    """Verify current password and replace it with a new password hash."""
+    now = datetime.now(timezone.utc)
+    with get_connection() as conn:
+        _ensure_app_schema(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT password_hash
+                FROM users
+                WHERE id = %s;
+                """,
+                (user_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise ValueError("Account not found.")
+            current_hash = str(row[0] or "")
+            if not current_hash:
+                raise ValueError("Password is not set for this account.")
+            if not _verify_password(current_password, current_hash):
+                raise ValueError("Current password is incorrect.")
+
+            cur.execute(
+                """
+                UPDATE users
+                SET password_hash = %s,
+                    last_seen_at_utc = %s
+                WHERE id = %s;
+                """,
+                (_hash_password(new_password), now, user_id),
+            )
+        conn.commit()
 
 
 def _count_liked_puppies(user_id: int) -> int:
@@ -885,6 +1227,7 @@ def _render_page(
           <div class="account-actions">
             <span class="account-email">{escaped_signed_in_email}</span>
             <a class="profile-link" href="/likes">Liked pups</a>
+            <a class="profile-link" href="/reset-password">Reset password</a>
             <form class="inline-form" method="post" action="/signout">
               <input type="hidden" name="next" value="/" />
               <button class="btn subtle" type="submit">Sign out</button>
@@ -1310,7 +1653,7 @@ def _render_signin_page(
         """
     else:
         account_line = (
-            '<p class="auth-copy">Use any valid email (Gmail, Outlook, Yahoo, or others).</p>'
+            '<p class="auth-copy">Use email + password. First sign-in creates your account.</p>'
         )
 
     page_html = f"""<!doctype html>
@@ -1321,7 +1664,7 @@ def _render_signin_page(
     <title>Sign In | PupSwipe</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
-  <body>
+  <body class="signin-page">
     <div class="background">
       <div class="glow glow-a"></div>
       <div class="glow glow-b"></div>
@@ -1356,9 +1699,224 @@ def _render_signin_page(
                 value="{escaped_email}"
                 required
               />
+              <label for="signin-password">Password</label>
+              <input
+                id="signin-password"
+                name="password"
+                type="password"
+                autocomplete="current-password"
+                minlength="{PASSWORD_MIN_LENGTH}"
+                required
+              />
               <button class="btn like" type="submit">Continue</button>
             </form>
-            <a class="profile-link" href="/">Back to PupSwipe</a>
+            <div class="auth-links">
+              <a class="profile-link" href="/forgot-password">Forgot password?</a>
+              <a class="profile-link" href="/">Back to PupSwipe</a>
+            </div>
+          </article>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>"""
+    return page_html.encode("utf-8")
+
+
+def _render_forgot_password_page(
+    message: str | None = None,
+    email_value: str = "",
+) -> bytes:
+    """Render forgot-password request page."""
+    info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    escaped_email = escape(email_value)
+    page_html = f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Forgot Password | PupSwipe</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="background">
+      <div class="glow glow-a"></div>
+      <div class="glow glow-b"></div>
+      <div class="grid"></div>
+    </div>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">PS</div>
+          <div>
+            <h1>PupSwipe</h1>
+            <p>Forgot password</p>
+          </div>
+        </div>
+      </header>
+      {info_msg}
+      <main>
+        <section class="auth-shell">
+          <article class="auth-card">
+            <h2>Reset via email</h2>
+            <p class="auth-copy">Enter your account email and we will send a reset link.</p>
+            <form class="auth-form" method="post" action="/forgot-password">
+              <label for="forgot-email">Email address</label>
+              <input
+                id="forgot-email"
+                name="email"
+                type="email"
+                inputmode="email"
+                autocomplete="email"
+                placeholder="you@example.com"
+                value="{escaped_email}"
+                required
+              />
+              <button class="btn like" type="submit">Send reset link</button>
+            </form>
+            <a class="profile-link" href="/signin">Back to sign in</a>
+          </article>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>"""
+    return page_html.encode("utf-8")
+
+
+def _render_forgot_password_reset_page(
+    token: str,
+    message: str | None = None,
+) -> bytes:
+    """Render reset-password-by-token page."""
+    info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    page_html = f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Set New Password | PupSwipe</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="background">
+      <div class="glow glow-a"></div>
+      <div class="glow glow-b"></div>
+      <div class="grid"></div>
+    </div>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">PS</div>
+          <div>
+            <h1>PupSwipe</h1>
+            <p>Set new password</p>
+          </div>
+        </div>
+      </header>
+      {info_msg}
+      <main>
+        <section class="auth-shell">
+          <article class="auth-card">
+            <h2>Choose a new password</h2>
+            <form class="auth-form" method="post" action="/forgot-password/reset">
+              <input type="hidden" name="token" value="{escape(token)}" />
+              <label for="new-password">New password</label>
+              <input
+                id="new-password"
+                name="new_password"
+                type="password"
+                autocomplete="new-password"
+                minlength="{PASSWORD_MIN_LENGTH}"
+                required
+              />
+              <label for="confirm-password">Confirm new password</label>
+              <input
+                id="confirm-password"
+                name="confirm_password"
+                type="password"
+                autocomplete="new-password"
+                minlength="{PASSWORD_MIN_LENGTH}"
+                required
+              />
+              <button class="btn like" type="submit">Set password</button>
+            </form>
+            <a class="profile-link" href="/signin">Back to sign in</a>
+          </article>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>"""
+    return page_html.encode("utf-8")
+
+
+def _render_reset_password_page(
+    signed_in_email: str,
+    message: str | None = None,
+) -> bytes:
+    """Render reset-password page for a signed-in user."""
+    info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    page_html = f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Reset Password | PupSwipe</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="background">
+      <div class="glow glow-a"></div>
+      <div class="glow glow-b"></div>
+      <div class="grid"></div>
+    </div>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">PS</div>
+          <div>
+            <h1>PupSwipe</h1>
+            <p>Reset your password</p>
+          </div>
+        </div>
+      </header>
+      {info_msg}
+      <main>
+        <section class="auth-shell">
+          <article class="auth-card">
+            <h2>Reset password</h2>
+            <p class="auth-copy">Signed in as <strong>{escape(signed_in_email)}</strong></p>
+            <form class="auth-form" method="post" action="/reset-password">
+              <label for="current-password">Current password</label>
+              <input
+                id="current-password"
+                name="current_password"
+                type="password"
+                autocomplete="current-password"
+                required
+              />
+              <label for="new-password">New password</label>
+              <input
+                id="new-password"
+                name="new_password"
+                type="password"
+                autocomplete="new-password"
+                minlength="{PASSWORD_MIN_LENGTH}"
+                required
+              />
+              <label for="confirm-password">Confirm new password</label>
+              <input
+                id="confirm-password"
+                name="confirm_password"
+                type="password"
+                autocomplete="new-password"
+                minlength="{PASSWORD_MIN_LENGTH}"
+                required
+              />
+              <button class="btn like" type="submit">Update password</button>
+            </form>
+            <a class="profile-link" href="/likes">Back to liked puppies</a>
           </article>
         </section>
       </main>
@@ -1467,6 +2025,7 @@ def _render_likes_page(
         </div>
         <div class="account-actions">
           <span class="account-email">{escape(email)}</span>
+          <a class="profile-link" href="/reset-password">Reset password</a>
           <form class="inline-form" method="post" action="/signout">
             <input type="hidden" name="next" value="/signin" />
             <button class="btn subtle" type="submit">Sign out</button>
@@ -1541,6 +2100,23 @@ class AppHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _public_base_url(self) -> str:
+        """Resolve the externally reachable base URL for email links."""
+        configured = os.environ.get("PUPSWIPE_PUBLIC_URL", "").strip()
+        if configured:
+            return configured.rstrip("/")
+        proto = (self._first_header("X-Forwarded-Proto") or "http").strip().lower()
+        if proto not in {"http", "https"}:
+            proto = "http"
+        host = (self._first_header("X-Forwarded-Host", "Host") or "").strip()
+        if not host:
+            host = "127.0.0.1:8000"
+        return f"{proto}://{host}"
+
+    def _absolute_url(self, path: str) -> str:
+        """Build an absolute URL from a site-relative path."""
+        return f"{self._public_base_url()}{path}"
 
     def _session_cookie_header(self, user_id: int) -> str:
         """Build Set-Cookie header value for a signed-in session."""
@@ -1730,6 +2306,39 @@ class AppHandler(SimpleHTTPRequestHandler):
             except Exception as exc:
                 return self._send_json(500, {"ok": False, "detail": str(exc)})
 
+        if parsed.path == "/forgot-password":
+            query = parse_qs(parsed.query)
+            message = query.get("msg", [None])[0]
+            email_value = " ".join(query.get("email", [""])[0].split()).strip()
+            body = _render_forgot_password_page(
+                message=message,
+                email_value=email_value,
+            )
+            return self._send_html(200, body)
+
+        if parsed.path == "/forgot-password/reset":
+            query = parse_qs(parsed.query)
+            token = query.get("token", [""])[0].strip()
+            message = query.get("msg", [None])[0]
+            if not token:
+                msg_query = urlencode({"msg": "Invalid reset link."})
+                self.send_response(303)
+                self.send_header("Location", f"/forgot-password?{msg_query}")
+                self.end_headers()
+                return
+            try:
+                is_valid = _is_password_reset_token_valid(token)
+            except Exception:
+                is_valid = False
+            if not is_valid:
+                msg_query = urlencode({"msg": "Reset link is invalid or expired."})
+                self.send_response(303)
+                self.send_header("Location", f"/forgot-password?{msg_query}")
+                self.end_headers()
+                return
+            body = _render_forgot_password_reset_page(token=token, message=message)
+            return self._send_html(200, body)
+
         if parsed.path == "/signin":
             query = parse_qs(parsed.query)
             message = query.get("msg", [None])[0]
@@ -1778,6 +2387,23 @@ class AppHandler(SimpleHTTPRequestHandler):
             )
             return self._send_html(200, body)
 
+        if parsed.path == "/reset-password":
+            current_user = self._signed_in_user()
+            if not current_user:
+                query = urlencode(
+                    {"next": "/reset-password", "msg": "Sign in to reset password."}
+                )
+                self.send_response(303)
+                self.send_header("Location", f"/signin?{query}")
+                self.end_headers()
+                return
+            message = parse_qs(parsed.query).get("msg", [None])[0]
+            body = _render_reset_password_page(
+                signed_in_email=str(current_user.get("email") or ""),
+                message=message,
+            )
+            return self._send_html(200, body)
+
         if parsed.path == "/" or parsed.path == "/index.html":
             query = parse_qs(parsed.query)
             offset = _safe_int(query.get("offset", ["0"])[0], 0)
@@ -1816,6 +2442,84 @@ class AppHandler(SimpleHTTPRequestHandler):
             None.
         """
         parsed = urlparse(self.path)
+        if parsed.path == "/forgot-password":
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length).decode("utf-8") if length else ""
+            form = parse_qs(body)
+            email_raw = form.get("email", [""])[0]
+            email = _normalize_email(email_raw)
+            if not _is_valid_email(email):
+                query = urlencode(
+                    {
+                        "msg": "Enter a valid email address.",
+                        "email": " ".join(str(email_raw).split()).strip(),
+                    }
+                )
+                self.send_response(303)
+                self.send_header("Location", f"/forgot-password?{query}")
+                self.end_headers()
+                return
+
+            # Avoid account enumeration: response is always generic.
+            generic_msg = (
+                f"If an account exists for {email}, a reset link has been sent."
+            )
+            try:
+                user = _get_user_for_password_reset(email)
+                if user:
+                    user_id = _safe_int(str(user.get("id")), 0)
+                    if user_id > 0:
+                        token, _expires = _create_password_reset_token(user_id)
+                        reset_query = urlencode({"token": token})
+                        reset_link = self._absolute_url(f"/forgot-password/reset?{reset_query}")
+                        _send_password_reset_email(email, reset_link)
+            except Exception:
+                # Intentionally suppress details to prevent user enumeration.
+                pass
+
+            query = urlencode({"msg": generic_msg, "email": email})
+            self.send_response(303)
+            self.send_header("Location", f"/signin?{query}")
+            self.end_headers()
+            return
+
+        if parsed.path == "/forgot-password/reset":
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length).decode("utf-8") if length else ""
+            form = parse_qs(body)
+            token = form.get("token", [""])[0].strip()
+            new_password = form.get("new_password", [""])[0]
+            confirm_password = form.get("confirm_password", [""])[0]
+            if not token:
+                query = urlencode({"msg": "Invalid reset link."})
+                self.send_response(303)
+                self.send_header("Location", f"/forgot-password?{query}")
+                self.end_headers()
+                return
+
+            validation_error = _new_password_error(new_password, confirm_password)
+            if validation_error:
+                query = urlencode({"token": token, "msg": validation_error})
+                self.send_response(303)
+                self.send_header("Location", f"/forgot-password/reset?{query}")
+                self.end_headers()
+                return
+
+            try:
+                _consume_password_reset_token(token, new_password)
+            except Exception as exc:
+                query = urlencode({"msg": f"Password reset failed: {exc}"})
+                self.send_response(303)
+                self.send_header("Location", f"/forgot-password?{query}")
+                self.end_headers()
+                return
+
+            query = urlencode({"msg": "Password updated. Sign in with your new password."})
+            self.send_response(303)
+            self.send_header("Location", f"/signin?{query}")
+            self.end_headers()
+            return
+
         if parsed.path == "/signin":
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(length).decode("utf-8") if length else ""
@@ -1823,6 +2527,7 @@ class AppHandler(SimpleHTTPRequestHandler):
 
             email_raw = form.get("email", [""])[0]
             email = _normalize_email(email_raw)
+            password = form.get("password", [""])[0]
             next_path = _normalize_next_path(form.get("next", ["/likes"])[0], "/likes")
 
             if not _is_valid_email(email):
@@ -1838,8 +2543,22 @@ class AppHandler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 return
 
+            password_validation_error = _password_error(password)
+            if password_validation_error:
+                query = urlencode(
+                    {
+                        "msg": password_validation_error,
+                        "next": next_path,
+                        "email": email,
+                    }
+                )
+                self.send_response(303)
+                self.send_header("Location", f"/signin?{query}")
+                self.end_headers()
+                return
+
             try:
-                user = _upsert_user(email)
+                user = _upsert_user(email, password)
                 user_id = _safe_int(str(user.get("id")), 0)
                 if user_id <= 0:
                     raise ValueError("failed to create session user")
@@ -1870,6 +2589,58 @@ class AppHandler(SimpleHTTPRequestHandler):
             self.send_response(303)
             self.send_header("Set-Cookie", self._clear_session_cookie_header())
             self.send_header("Location", next_path)
+            self.end_headers()
+            return
+
+        if parsed.path == "/reset-password":
+            current_user = self._signed_in_user()
+            if not current_user:
+                query = urlencode(
+                    {"next": "/reset-password", "msg": "Sign in to reset password."}
+                )
+                self.send_response(303)
+                self.send_header("Location", f"/signin?{query}")
+                self.end_headers()
+                return
+
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length).decode("utf-8") if length else ""
+            form = parse_qs(body)
+            current_password = form.get("current_password", [""])[0]
+            new_password = form.get("new_password", [""])[0]
+            confirm_password = form.get("confirm_password", [""])[0]
+            validation_error = _password_reset_error(
+                current_password,
+                new_password,
+                confirm_password,
+            )
+            if validation_error:
+                query = urlencode({"msg": validation_error})
+                self.send_response(303)
+                self.send_header("Location", f"/reset-password?{query}")
+                self.end_headers()
+                return
+
+            user_id = _safe_int(str(current_user.get("id")), 0)
+            if user_id <= 0:
+                query = urlencode({"msg": "Unable to locate signed-in account."})
+                self.send_response(303)
+                self.send_header("Location", f"/reset-password?{query}")
+                self.end_headers()
+                return
+
+            try:
+                _update_user_password(user_id, current_password, new_password)
+            except Exception as exc:
+                query = urlencode({"msg": f"Failed to reset password: {exc}"})
+                self.send_response(303)
+                self.send_header("Location", f"/reset-password?{query}")
+                self.end_headers()
+                return
+
+            query = urlencode({"msg": "Password updated."})
+            self.send_response(303)
+            self.send_header("Location", f"/likes?{query}")
             self.end_headers()
             return
 

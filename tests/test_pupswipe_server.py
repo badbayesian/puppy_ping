@@ -344,4 +344,67 @@ def test_render_page_shows_auth_links_by_signin_state(monkeypatch):
     ).decode("utf-8")
     assert "person@gmail.com" in signed_in_html
     assert "Liked pups" in signed_in_html
+    assert "Reset password" in signed_in_html
     assert "Sign out" in signed_in_html
+
+
+def test_password_hash_round_trip():
+    password = "supersecret123"
+    password_hash = pupswipe._hash_password(password)
+    assert pupswipe._verify_password(password, password_hash)
+    assert not pupswipe._verify_password("wrongpassword", password_hash)
+
+
+def test_password_error_enforces_min_length():
+    assert pupswipe._password_error("short")
+    assert pupswipe._password_error("s" * pupswipe.PASSWORD_MIN_LENGTH) is None
+
+
+def test_new_password_error_validates_confirmation():
+    assert pupswipe._new_password_error("short", "short")
+    assert pupswipe._new_password_error("validpass123", "different")
+    assert pupswipe._new_password_error("validpass123", "validpass123") is None
+
+
+def test_password_reset_error_validates_inputs():
+    assert pupswipe._password_reset_error("", "newpassword", "newpassword")
+    assert pupswipe._password_reset_error("old", "short", "short")
+    assert pupswipe._password_reset_error("oldpassword", "newpassword", "different")
+    assert pupswipe._password_reset_error("samepassword", "samepassword", "samepassword")
+    assert (
+        pupswipe._password_reset_error("oldpassword", "newpassword", "newpassword")
+        is None
+    )
+
+
+def test_render_signin_page_has_password_field():
+    html = pupswipe._render_signin_page().decode("utf-8")
+    assert '<body class="signin-page">' in html
+    assert 'name="password"' in html
+    assert 'type="password"' in html
+    assert 'class="auth-links"' in html
+    assert "Forgot password?" in html
+
+
+def test_render_reset_password_page_has_fields():
+    html = pupswipe._render_reset_password_page("person@gmail.com").decode("utf-8")
+    assert "Reset password" in html
+    assert 'name="current_password"' in html
+    assert 'name="new_password"' in html
+    assert 'name="confirm_password"' in html
+
+
+def test_render_forgot_password_pages_have_expected_fields():
+    request_html = pupswipe._render_forgot_password_page().decode("utf-8")
+    assert 'name="email"' in request_html
+    assert "Send reset link" in request_html
+
+    reset_html = pupswipe._render_forgot_password_reset_page("abc123").decode("utf-8")
+    assert 'name="token" value="abc123"' in reset_html
+    assert 'name="new_password"' in reset_html
+    assert 'name="confirm_password"' in reset_html
+
+
+def test_password_reset_token_hash_is_deterministic():
+    token = "my-token"
+    assert pupswipe._password_reset_token_hash(token) == pupswipe._password_reset_token_hash(token)

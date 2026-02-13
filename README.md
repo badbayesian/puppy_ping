@@ -209,8 +209,12 @@ Schedule daily backup at 1:30 AM with 30-day retention:
   - `swipe: "right"` = like
   - `swipe: "left"` = nope
 - `GET /api/health` checks DB connectivity.
-- `GET /signin` renders email sign-in (Gmail/Outlook/any valid email).
+- `GET /signin` renders email + password sign-in (Gmail/Outlook/any valid email).
 - `GET /likes` shows liked puppies for the signed-in user.
+- `GET /reset-password` allows signed-in users to update their password.
+- `GET /forgot-password` requests an email reset link.
+- `GET /forgot-password/reset?token=...` renders token-based password reset.
+- Forgot-password emails use SMTP env vars and optional `PUPSWIPE_PUBLIC_URL` for link generation.
 
 Example payload:
 
@@ -230,6 +234,7 @@ Example payload:
 - `dog_swipes`: PupSwipe left/right interactions + basic client metadata.
 - `users`: signed-in PupSwipe users (email keyed).
 - `dog_likes`: per-user liked dogs keyed by `user_id`.
+- `password_reset_tokens`: one-time reset tokens with expiry and used-at tracking.
 - `email_subscribers`: PuppyPing alert subscriptions.
 
 ## Legal Note in App
