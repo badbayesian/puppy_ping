@@ -1,7 +1,7 @@
 from datetime import datetime, timezone, timedelta
 
 import puppyping.db as db
-from puppyping.models import DogMedia, DogProfile
+from puppyping.models import PetMedia, PetProfile
 
 
 class DummyCursor:
@@ -74,11 +74,11 @@ def test_get_pg_config_defaults(monkeypatch):
 def test_store_profiles(monkeypatch):
     conn = DummyConn()
     monkeypatch.setattr(db, "get_connection", lambda: conn)
-    profile = DogProfile(
+    profile = PetProfile(
         dog_id=1,
         url="u",
         name="n",
-        media=DogMedia(),
+        media=PetMedia(),
     )
     logger = DummyLogger()
     db.store_profiles_in_db([profile], logger=logger)

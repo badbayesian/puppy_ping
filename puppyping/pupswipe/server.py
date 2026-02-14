@@ -68,6 +68,8 @@ _provider_name = provider_name
 PUPSWIPE_SOURCES = _get_pupswipe_sources()
 _ensure_app_schema = repo_ensure_app_schema
 
+MAX_SPECIES_FILTER_LENGTH = 40
+
 
 def _normalize_breed_filter(value: str | None) -> str:
     """Normalize user-entered breed filter text."""
@@ -95,10 +97,19 @@ def _normalize_provider_filter(value: str | None) -> str:
     return ""
 
 
+def _normalize_species_filter(value: str | None) -> str:
+    """Normalize species filter text."""
+    text = " ".join((value or "").split()).strip().lower()
+    if not text:
+        return ""
+    return text[:MAX_SPECIES_FILTER_LENGTH]
+
+
 def _filter_hidden_inputs(
     breed_filter: str = "",
     name_filter: str = "",
     provider_filter: str = "",
+    species_filter: str = "",
 ) -> str:
     """Render hidden form inputs for currently active filters."""
     hidden_inputs: list[str] = []
@@ -114,6 +125,10 @@ def _filter_hidden_inputs(
         hidden_inputs.append(
             f'<input type="hidden" name="provider" value="{escape(provider_filter)}" />'
         )
+    if species_filter:
+        hidden_inputs.append(
+            f'<input type="hidden" name="species" value="{escape(species_filter)}" />'
+        )
     return "\n            ".join(hidden_inputs)
 
 
@@ -122,6 +137,7 @@ def _add_active_filters(
     breed_filter: str = "",
     name_filter: str = "",
     provider_filter: str = "",
+    species_filter: str = "",
 ) -> dict[str, str]:
     """Attach non-empty filters to query params for redirects/links."""
     if breed_filter:
@@ -130,6 +146,8 @@ def _add_active_filters(
         query_params["name"] = name_filter
     if provider_filter:
         query_params["provider"] = provider_filter
+    if species_filter:
+        query_params["species"] = species_filter
     return query_params
 
 
@@ -139,6 +157,7 @@ def _fetch_puppies(
     breed_filter: str = "",
     name_filter: str = "",
     provider_filter: str = "",
+    species_filter: str = "",
 ) -> list[dict]:
     """Load the latest available dog profiles ordered by recency."""
     return repo_fetch_puppies(
@@ -147,6 +166,7 @@ def _fetch_puppies(
         breed_filter=breed_filter,
         name_filter=name_filter,
         provider_filter=provider_filter,
+        species_filter=species_filter,
         sources=PUPSWIPE_SOURCES,
         connection_factory=get_connection,
         ensure_schema_fn=_ensure_app_schema,
@@ -157,12 +177,14 @@ def _count_puppies(
     breed_filter: str = "",
     name_filter: str = "",
     provider_filter: str = "",
+    species_filter: str = "",
 ) -> int:
     """Count latest dog profiles that are currently available."""
     return repo_count_puppies(
         breed_filter=breed_filter,
         name_filter=name_filter,
         provider_filter=provider_filter,
+        species_filter=species_filter,
         sources=PUPSWIPE_SOURCES,
         connection_factory=get_connection,
         ensure_schema_fn=_ensure_app_schema,
@@ -172,6 +194,7 @@ def _count_puppies(
 def _store_swipe(
     dog_id: int,
     swipe: str,
+    species: str | None = None,
     source: str | None = None,
     user_id: int | None = None,
     user_key: str | None = None,
@@ -183,6 +206,7 @@ def _store_swipe(
     """Persist a swipe event for a dog."""
     repo_store_swipe(
         dog_id=dog_id,
+        species=species,
         swipe=swipe,
         source=source,
         user_id=user_id,
@@ -349,6 +373,7 @@ def _sync_page_context() -> None:
     pages._normalize_breed_filter = _normalize_breed_filter
     pages._normalize_name_filter = _normalize_name_filter
     pages._normalize_provider_filter = _normalize_provider_filter
+    pages._normalize_species_filter = _normalize_species_filter
     pages._filter_hidden_inputs = _filter_hidden_inputs
     pages._count_puppies = _count_puppies
     pages._fetch_puppies = _fetch_puppies
@@ -379,6 +404,7 @@ def _render_page(
     breed_filter: str = "",
     name_filter: str = "",
     provider_filter: str = "",
+    species_filter: str = "",
     signed_in_email: str | None = None,
 ) -> bytes:
     _sync_page_context()
@@ -390,6 +416,7 @@ def _render_page(
         breed_filter=breed_filter,
         name_filter=name_filter,
         provider_filter=provider_filter,
+        species_filter=species_filter,
         signed_in_email=signed_in_email,
     )
 
@@ -697,12 +724,14 @@ class AppHandler(SimpleHTTPRequestHandler):
             breed_filter = _normalize_breed_filter(query.get("breed", [""])[0])
             name_filter = _normalize_name_filter(query.get("name", [""])[0])
             provider_filter = _normalize_provider_filter(query.get("provider", [""])[0])
+            species_filter = _normalize_species_filter(query.get("species", [""])[0])
             try:
                 puppies = _fetch_puppies(
                     limit,
                     breed_filter=breed_filter,
                     name_filter=name_filter,
                     provider_filter=provider_filter,
+                    species_filter=species_filter,
                 )
             except Exception as exc:
                 return self._send_json(
@@ -825,6 +854,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             breed_filter = _normalize_breed_filter(query.get("breed", [""])[0])
             name_filter = _normalize_name_filter(query.get("name", [""])[0])
             provider_filter = _normalize_provider_filter(query.get("provider", [""])[0])
+            species_filter = _normalize_species_filter(query.get("species", [""])[0])
             randomize = query.get("random", ["0"])[0].strip().lower() in {
                 "1",
                 "true",
@@ -841,6 +871,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 breed_filter=breed_filter,
                 name_filter=name_filter,
                 provider_filter=provider_filter,
+                species_filter=species_filter,
                 signed_in_email=(
                     str(current_user.get("email") or "") if current_user else None
                 ),
@@ -1068,6 +1099,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             breed_filter = _normalize_breed_filter(form.get("breed", [""])[0])
             name_filter = _normalize_name_filter(form.get("name", [""])[0])
             provider_filter = _normalize_provider_filter(form.get("provider", [""])[0])
+            species_filter = _normalize_species_filter(form.get("species", [""])[0])
             email = _normalize_email(form.get("email", [""])[0])
 
             query_params = {"offset": str(offset), "photo": str(photo_index)}
@@ -1076,6 +1108,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 breed_filter=breed_filter,
                 name_filter=name_filter,
                 provider_filter=provider_filter,
+                species_filter=species_filter,
             )
             if not _is_valid_email(email):
                 query_params["msg"] = "Enter a valid email address."
@@ -1121,12 +1154,14 @@ class AppHandler(SimpleHTTPRequestHandler):
                 breed_filter = _normalize_breed_filter(form.get("breed", [""])[0])
                 name_filter = _normalize_name_filter(form.get("name", [""])[0])
                 provider_filter = _normalize_provider_filter(form.get("provider", [""])[0])
+                species_filter = _normalize_species_filter(form.get("species", [""])[0])
                 query_params = {"msg": "Invalid dog id"}
                 query_params = _add_active_filters(
                     query_params,
                     breed_filter=breed_filter,
                     name_filter=name_filter,
                     provider_filter=provider_filter,
+                    species_filter=species_filter,
                 )
                 self.send_response(303)
                 self.send_header("Location", f"/?{urlencode(query_params)}")
@@ -1137,6 +1172,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             breed_filter = _normalize_breed_filter(form.get("breed", [""])[0])
             name_filter = _normalize_name_filter(form.get("name", [""])[0])
             provider_filter = _normalize_provider_filter(form.get("provider", [""])[0])
+            species_filter = _normalize_species_filter(form.get("species", [""])[0])
             if swipe not in ("left", "right"):
                 query_params = {"msg": "Invalid swipe value"}
                 query_params = _add_active_filters(
@@ -1144,6 +1180,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                     breed_filter=breed_filter,
                     name_filter=name_filter,
                     provider_filter=provider_filter,
+                    species_filter=species_filter,
                 )
                 self.send_response(303)
                 self.send_header("Location", f"/?{urlencode(query_params)}")
@@ -1157,8 +1194,9 @@ class AppHandler(SimpleHTTPRequestHandler):
             )
             try:
                 _store_swipe(
-                    dog_id,
-                    swipe,
+                    dog_id=dog_id,
+                    species=form.get("species", [""])[0],
+                    swipe=swipe,
                     source="pupswipe",
                     user_id=current_user_id if current_user_id > 0 else None,
                     **self._user_context(form_payload),
@@ -1170,6 +1208,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                     breed_filter=breed_filter,
                     name_filter=name_filter,
                     provider_filter=provider_filter,
+                    species_filter=species_filter,
                 )
                 query = urlencode(query_params)
                 self.send_response(303)
@@ -1183,6 +1222,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 breed_filter=breed_filter,
                 name_filter=name_filter,
                 provider_filter=provider_filter,
+                species_filter=species_filter,
             )
             query = urlencode(query_params)
             self.send_response(303)
@@ -1211,13 +1251,15 @@ class AppHandler(SimpleHTTPRequestHandler):
             return self._send_json(400, {"error": "swipe must be left or right"})
 
         source = payload.get("source")
+        species = payload.get("species")
         current_user = self._signed_in_user()
         current_user_id = _safe_int(str(current_user.get("id")), 0) if current_user else 0
         try:
             _store_swipe(
-                dog_id,
-                swipe,
-                source,
+                dog_id=dog_id,
+                species=species,
+                swipe=swipe,
+                source=source,
                 user_id=current_user_id if current_user_id > 0 else None,
                 **self._user_context(payload),
             )

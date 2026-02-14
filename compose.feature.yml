@@ -1,0 +1,45 @@
+services:
+  puppyping:
+    container_name: puppyping-scraper-feature
+    # Scraper is opt-in for feature stack; keep main stack as the single scheduler.
+    profiles:
+      - scraper
+
+  postgres:
+    container_name: puppyping-postgres-feature
+    ports: !override
+      - "5434:5432"
+
+  pgadmin:
+    container_name: puppyping-pgadmin-feature
+    ports: !override
+      - "5051:80"
+
+  pupswipe:
+    container_name: puppyping-pupswipe-feature
+    environment:
+      TZ: America/Chicago
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: ${PGUSER}
+      PGPASSWORD: ${PGPASSWORD}
+      PGDATABASE: ${PGDATABASE}
+      PUPSWIPE_SESSION_SECRET: ${PUPSWIPE_SESSION_SECRET:-}
+      PUPSWIPE_PUBLIC_URL: ${PUPSWIPE_PUBLIC_URL:-}
+      EMAIL_HOST: ${EMAIL_HOST}
+      EMAIL_PORT: ${EMAIL_PORT}
+      EMAIL_USER: ${EMAIL_USER}
+      EMAIL_PASS: ${EMAIL_PASS}
+      EMAIL_FROM: ${EMAIL_FROM}
+    ports: !override
+      - "${PUPSWIPE_DEV_BIND_IP:-127.0.0.1}:${PUPSWIPE_DEV_PORT:-8001}:8000"
+
+networks:
+  puppyping_net:
+    name: puppyping_net_feature
+
+volumes:
+  postgres_data:
+    name: puppyping_postgres_data_feature
+  pgadmin_data:
+    name: puppyping_pgadmin_data_feature

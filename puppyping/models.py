@@ -6,7 +6,7 @@ from typing import Optional
 
 
 @dataclass(frozen=True)
-class DogMedia:
+class PetMedia:
     images: list[str] = field(default_factory=list)
     videos: list[str] = field(default_factory=list)
     embeds: list[str] = field(default_factory=list)
@@ -21,10 +21,11 @@ class DogMedia:
 
 
 @dataclass(frozen=True)
-class DogProfile:
+class PetProfile:
     dog_id: int
     url: str
 
+    species: str = "dog"
     name: Optional[str] = None
     breed: Optional[str] = None
     gender: Optional[str] = None
@@ -37,11 +38,21 @@ class DogProfile:
 
     ratings: dict[str, Optional[int]] = field(default_factory=dict)
     description: Optional[str] = None
-    media: DogMedia = field(default_factory=DogMedia)
+    media: PetMedia = field(default_factory=PetMedia)
 
     scraped_at_utc: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
+
+    def __post_init__(self) -> None:
+        """Normalize species to a lowercase value with a sensible default."""
+        normalized = str(self.species or "dog").strip().lower()
+        object.__setattr__(self, "species", normalized or "dog")
+
+    @property
+    def pet_id(self) -> int:
+        """Return canonical species-agnostic profile identifier."""
+        return self.dog_id
 
     def __str__(self) -> str:
         """Return a human-readable profile summary.
@@ -53,7 +64,16 @@ class DogProfile:
         def fmt(v):
             return v if v is not None else "--"
 
-        order = ["children", "dogs", "cats", "home_alone", "activity", "environment"]
+        order = [
+            "children",
+            "dogs",
+            "cats",
+            "home_alone",
+            "activity",
+            "environment",
+            "human_sociability",
+            "enrichment",
+        ]
         ratings_str = (
             ", ".join(
                 f"{k.replace('_', ' ').title()}: {self.ratings.get(k) if self.ratings.get(k) is not None else '--'}"
@@ -64,9 +84,10 @@ class DogProfile:
         )
 
         return (
-            f"DogProfile #{self.dog_id}\n"
+            f"PetProfile #{self.pet_id} ({self.species})\n"
             f"{'-' * 88}\n"
             f"Name       : {fmt(self.name)}\n"
+            f"Species    : {fmt(self.species)}\n"
             f"Breed      : {fmt(self.breed)}\n"
             f"Gender     : {fmt(self.gender)}\n"
             f"Age        : {fmt(self.age_months)} months\n"
@@ -78,3 +99,9 @@ class DogProfile:
             f"URL        : {self.url}\n"
             f"Scraped At : {self.scraped_at_utc}\n"
         )
+
+
+# Backward-compatible aliases while callers migrate from dog-specific names.
+DogMedia = PetMedia
+PetsProfile = PetProfile
+DogProfile = PetProfile

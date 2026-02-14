@@ -14,6 +14,7 @@ class DummyCursor:
         if "SELECT *" in query:
             self.description = [
                 SimpleNamespace(name="dog_id"),
+                SimpleNamespace(name="species"),
                 SimpleNamespace(name="url"),
                 SimpleNamespace(name="name"),
                 SimpleNamespace(name="breed"),
@@ -75,6 +76,7 @@ def test_get_pupswipe_sources_env_override(monkeypatch):
 def test_fetch_puppies_queries_multiple_sources(monkeypatch):
     row = (
         1,
+        "dog",
         "https://example.com/dog/1",
         "Paloma",
         "Lab Mix",
@@ -100,7 +102,8 @@ def test_fetch_puppies_queries_multiple_sources(monkeypatch):
     assert len(puppies) == 1
     assert puppies[0]["primary_image"] == "https://g.petango.com/photos/364/a.jpg"
     query, params = conn.cursor_obj.executed[-1]
-    assert "dog_status.source = ANY(%s::text[])" in query
+    assert "pet_status.source = ANY(%s::text[])" in query
+    assert "COALESCE(species, '') = %s" in query
     assert "COALESCE(breed, '') ILIKE %s ESCAPE '\\'" in query
     assert params[0] == ["paws_chicago", "wright_way"]
     assert "AND (%s = '' OR source = %s)" in query
@@ -108,6 +111,7 @@ def test_fetch_puppies_queries_multiple_sources(monkeypatch):
     assert params[2] == ""
     assert params[4] == ""
     assert params[6] == ""
+    assert params[8] == ""
 
 
 def test_count_puppies_queries_multiple_sources(monkeypatch):
@@ -120,26 +124,28 @@ def test_count_puppies_queries_multiple_sources(monkeypatch):
 
     assert total == 7
     query, params = conn.cursor_obj.executed[-1]
-    assert "dog_status.source = ANY(%s::text[])" in query
+    assert "pet_status.source = ANY(%s::text[])" in query
+    assert "COALESCE(species, '') = %s" in query
     assert "COALESCE(breed, '') ILIKE %s ESCAPE '\\'" in query
     assert params[0] == ["paws_chicago", "wright_way"]
-    assert "AND (%s = '' OR dog_status.source = %s)" in query
+    assert "AND (%s = '' OR pet_status.source = %s)" in query
     assert "COALESCE(name, '') ILIKE %s ESCAPE '\\'" in query
     assert params[1] == ""
     assert params[4] == ""
     assert params[6] == ""
+    assert params[8] == ""
 
 
 def test_render_page_has_uniform_card_structure_for_paws(monkeypatch):
     monkeypatch.setattr(
         pupswipe,
         "_count_puppies",
-        lambda breed_filter="", name_filter="", provider_filter="": 1,
+        lambda breed_filter="", name_filter="", provider_filter="", species_filter="": 1,
     )
     monkeypatch.setattr(
         pupswipe,
         "_fetch_puppies",
-        lambda limit, offset=0, breed_filter="", name_filter="", provider_filter="": [
+        lambda limit, offset=0, breed_filter="", name_filter="", provider_filter="", species_filter="": [
             {
                 "dog_id": 1,
                 "url": "https://www.pawschicago.org/pet-available-for-adoption/showdog/123",
@@ -162,18 +168,19 @@ def test_render_page_has_uniform_card_structure_for_paws(monkeypatch):
     assert "A sweet PAWS puppy profile description." in html
     assert "Provider link" in html
     assert "View on PAWS Chicago" in html
+    assert 'name="species" value="dog"' in html
 
 
 def test_render_page_has_uniform_card_structure_for_wright_way(monkeypatch):
     monkeypatch.setattr(
         pupswipe,
         "_count_puppies",
-        lambda breed_filter="", name_filter="", provider_filter="": 1,
+        lambda breed_filter="", name_filter="", provider_filter="", species_filter="": 1,
     )
     monkeypatch.setattr(
         pupswipe,
         "_fetch_puppies",
-        lambda limit, offset=0, breed_filter="", name_filter="", provider_filter="": [
+        lambda limit, offset=0, breed_filter="", name_filter="", provider_filter="", species_filter="": [
             {
                 "dog_id": 2,
                 "url": "http://ws.petango.com/webservices/adoptablesearch/wsAdoptableAnimalDetails.aspx?id=60044823",
@@ -196,18 +203,50 @@ def test_render_page_has_uniform_card_structure_for_wright_way(monkeypatch):
     assert "A sweet lab mix puppy from Mississippi." in html
     assert "Provider link" in html
     assert "View on Wright-Way Rescue" in html
+    assert 'name="species" value="dog"' in html
+
+
+def test_render_page_swipe_forms_include_cat_species(monkeypatch):
+    monkeypatch.setattr(
+        pupswipe,
+        "_count_puppies",
+        lambda breed_filter="", name_filter="", provider_filter="", species_filter="": 1,
+    )
+    monkeypatch.setattr(
+        pupswipe,
+        "_fetch_puppies",
+        lambda limit, offset=0, breed_filter="", name_filter="", provider_filter="", species_filter="": [
+            {
+                "dog_id": 22,
+                "species": "cat",
+                "url": "https://www.pawschicago.org/pet-available-for-adoption/showcat/22",
+                "name": "Mochi",
+                "breed": "Domestic Shorthair",
+                "gender": "Female",
+                "age_raw": "7 months",
+                "location": "Chicago, IL",
+                "status": "Available",
+                "description": "Cat profile",
+                "media": {"images": ["https://example.com/cat.jpg"]},
+                "source": "paws_chicago",
+            }
+        ],
+    )
+
+    html = pupswipe._render_page().decode("utf-8")
+    assert 'name="species" value="cat"' in html
 
 
 def test_render_page_shows_random_button(monkeypatch):
     monkeypatch.setattr(
         pupswipe,
         "_count_puppies",
-        lambda breed_filter="", name_filter="", provider_filter="": 1,
+        lambda breed_filter="", name_filter="", provider_filter="", species_filter="": 1,
     )
     monkeypatch.setattr(
         pupswipe,
         "_fetch_puppies",
-        lambda limit, offset=0, breed_filter="", name_filter="", provider_filter="": [
+        lambda limit, offset=0, breed_filter="", name_filter="", provider_filter="", species_filter="": [
             {
                 "dog_id": 3,
                 "url": "https://example.com/dog/3",
@@ -229,23 +268,43 @@ def test_render_page_shows_random_button(monkeypatch):
         breed_filter="Labrador",
         name_filter="Nova",
         provider_filter="wright_way",
+        species_filter="cat",
     ).decode("utf-8")
     assert ">Random</button>" in html
     assert 'name="random" value="1"' in html
     assert 'name="breed" value="Labrador"' in html
     assert 'name="name" value="Nova"' in html
     assert 'name="provider" value="wright_way"' in html
+    assert 'name="species" value="cat"' in html
     assert 'id="breed-filter"' in html
     assert 'id="name-filter"' in html
+    assert 'id="species-filter"' in html
     assert 'id="provider-filter"' in html
+    assert 'option value="cat" selected' in html
     assert 'option value="wright_way" selected' in html
+
+
+def test_render_page_empty_state_matches_species_filter(monkeypatch):
+    monkeypatch.setattr(
+        pupswipe,
+        "_count_puppies",
+        lambda breed_filter="", name_filter="", provider_filter="", species_filter="": 0,
+    )
+    monkeypatch.setattr(
+        pupswipe,
+        "_fetch_puppies",
+        lambda limit, offset=0, breed_filter="", name_filter="", provider_filter="", species_filter="": [],
+    )
+
+    html = pupswipe._render_page(species_filter="cat").decode("utf-8")
+    assert "No cats match those filters. Try different filters." in html
 
 
 def test_render_page_randomize_uses_random_offset(monkeypatch):
     monkeypatch.setattr(
         pupswipe,
         "_count_puppies",
-        lambda breed_filter="", name_filter="", provider_filter="": 5,
+        lambda breed_filter="", name_filter="", provider_filter="", species_filter="": 5,
     )
     monkeypatch.setattr(pupswipe.random, "randrange", lambda n: 1)
 
@@ -257,11 +316,13 @@ def test_render_page_randomize_uses_random_offset(monkeypatch):
         breed_filter="",
         name_filter="",
         provider_filter="",
+        species_filter="",
     ):
         captured["offset"] = offset
         captured["breed_filter"] = breed_filter
         captured["name_filter"] = name_filter
         captured["provider_filter"] = provider_filter
+        captured["species_filter"] = species_filter
         return [
             {
                 "dog_id": 4,
@@ -285,6 +346,7 @@ def test_render_page_randomize_uses_random_offset(monkeypatch):
         breed_filter="lab",
         name_filter="nova",
         provider_filter="paws_chicago",
+        species_filter="cat",
     )
 
     # random.randrange(total - 1) -> 1, then offset shifts to avoid current offset 1.
@@ -292,6 +354,7 @@ def test_render_page_randomize_uses_random_offset(monkeypatch):
     assert captured["breed_filter"] == "lab"
     assert captured["name_filter"] == "nova"
     assert captured["provider_filter"] == "paws_chicago"
+    assert captured["species_filter"] == "cat"
 
 
 def test_normalize_next_path_allows_only_local_paths():
@@ -313,12 +376,12 @@ def test_render_page_shows_auth_links_by_signin_state(monkeypatch):
     monkeypatch.setattr(
         pupswipe,
         "_count_puppies",
-        lambda breed_filter="", name_filter="", provider_filter="": 1,
+        lambda breed_filter="", name_filter="", provider_filter="", species_filter="": 1,
     )
     monkeypatch.setattr(
         pupswipe,
         "_fetch_puppies",
-        lambda limit, offset=0, breed_filter="", name_filter="", provider_filter="": [
+        lambda limit, offset=0, breed_filter="", name_filter="", provider_filter="", species_filter="": [
             {
                 "dog_id": 99,
                 "url": "https://example.com/dog/99",
@@ -408,3 +471,4 @@ def test_render_forgot_password_pages_have_expected_fields():
 def test_password_reset_token_hash_is_deterministic():
     token = "my-token"
     assert pupswipe._password_reset_token_hash(token) == pupswipe._password_reset_token_hash(token)
+

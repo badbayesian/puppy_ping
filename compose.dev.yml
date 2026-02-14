@@ -43,7 +43,7 @@ services:
       EMAIL_PASS: ${EMAIL_PASS}
       EMAIL_FROM: ${EMAIL_FROM}
     ports:
-      - "${PUPSWIPE_DEV_BIND_IP:-127.0.0.1}:${PUPSWIPE_DEV_PORT:-8001}:8000"
+      - "${PUPSWIPE_DEV_BIND_IP:-127.0.0.1}:${PUPSWIPE_DEV_PORT:-8001}:${PUPSWIPE_PORT:-8010}"
     volumes:
       - ./puppyping:/app/puppyping
 

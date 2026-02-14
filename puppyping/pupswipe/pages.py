@@ -50,6 +50,27 @@ def _get_photo_urls(pup: dict) -> list[str]:
     return urls
 
 
+def _filtered_species_label(species_filter: str) -> str:
+    """Return copy-friendly plural label for species-filter empty states."""
+    normalized = str(species_filter or "").strip().lower()
+    if not normalized:
+        return "puppies"
+
+    if normalized == "dog":
+        return "dogs"
+    if normalized == "cat":
+        return "cats"
+    if normalized == "rabbit":
+        return "rabbits"
+    if normalized == "bird":
+        return "birds"
+    if normalized == "other":
+        return "pets"
+    if normalized.endswith("s"):
+        return normalized
+    return f"{normalized} profiles"
+
+
 def _render_page(
     offset: int = 0,
     message: str | None = None,
@@ -58,6 +79,7 @@ def _render_page(
     breed_filter: str = "",
     name_filter: str = "",
     provider_filter: str = "",
+    species_filter: str = "",
     signed_in_email: str | None = None,
 ) -> bytes:
     """Render the main HTML page.
@@ -70,6 +92,7 @@ def _render_page(
         breed_filter: Optional breed filter text.
         name_filter: Optional name filter text.
         provider_filter: Optional provider source filter text.
+        species_filter: Optional species filter text.
         signed_in_email: Optional signed-in email for account actions.
 
     Returns:
@@ -78,12 +101,14 @@ def _render_page(
     normalized_breed = _normalize_breed_filter(breed_filter)
     normalized_name = _normalize_name_filter(name_filter)
     normalized_provider = _normalize_provider_filter(provider_filter)
+    normalized_species = _normalize_species_filter(species_filter)
     escaped_breed = escape(normalized_breed)
     escaped_name = escape(normalized_name)
     filter_hidden_inputs = _filter_hidden_inputs(
         breed_filter=normalized_breed,
         name_filter=normalized_name,
         provider_filter=normalized_provider,
+        species_filter=normalized_species,
     )
     escaped_signed_in_email = escape(signed_in_email) if signed_in_email else ""
     if signed_in_email:
@@ -111,6 +136,7 @@ def _render_page(
             breed_filter=normalized_breed,
             name_filter=normalized_name,
             provider_filter=normalized_provider,
+            species_filter=normalized_species,
         )
         if total > 0 and offset >= total:
             offset = 0
@@ -128,6 +154,7 @@ def _render_page(
             breed_filter=normalized_breed,
             name_filter=normalized_name,
             provider_filter=normalized_provider,
+            species_filter=normalized_species,
         )
     except Exception as exc:
         error_html = f"""<!doctype html>
@@ -168,6 +195,8 @@ def _render_page(
         active_filters.append(f"Name: {normalized_name}")
     if normalized_provider:
         active_filters.append(f"Provider: {_provider_name(normalized_provider)}")
+    if normalized_species:
+        active_filters.append(f"Species: {normalized_species.title()}")
     if active_filters:
         stats = f"{stats} | Filters: {', '.join(active_filters)}"
 
@@ -183,6 +212,17 @@ def _render_page(
             f'<option value="{escape(source)}"{selected_attr}>{escape(_provider_name(source))}</option>'
         )
     provider_options_html = "".join(provider_options)
+    species_option_values = ["", "dog", "cat", "rabbit", "bird", "other"]
+    if normalized_species and normalized_species not in species_option_values:
+        species_option_values.append(normalized_species)
+    species_options_html = "".join(
+        (
+            f'<option value="{escape(value)}"'
+            f'{" selected" if value == normalized_species else ""}>'
+            f'{escape("All species" if value == "" else value.title())}</option>'
+        )
+        for value in species_option_values
+    )
 
     filter_bar = f"""
       <section class="filter-strip" aria-label="Pup filters">
@@ -211,6 +251,12 @@ def _render_page(
             />
           </div>
           <div class="filter-field">
+            <label for="species-filter">Species</label>
+            <select id="species-filter" name="species">
+              {species_options_html}
+            </select>
+          </div>
+          <div class="filter-field">
             <label for="provider-filter">Provider</label>
             <select id="provider-filter" name="provider">
               {provider_options_html}
@@ -223,10 +269,11 @@ def _render_page(
     """
 
     if not puppies:
+        filtered_species_label = _filtered_species_label(normalized_species)
         empty_msg = (
             message
             or (
-                "No puppies match those filters. Try different filters."
+                f"No {filtered_species_label} match those filters. Try different filters."
                 if active_filters
                 else "No puppies to show yet. Run scraper and refresh."
             )
@@ -300,6 +347,9 @@ def _render_page(
 
     pup = puppies[0]
     dog_id = _safe_int(str(pup.get("dog_id")), 0)
+    species = escape(
+        " ".join(str(pup.get("species") or "dog").split()).strip().lower() or "dog"
+    )
 
     name = escape(str(pup.get("name") or "Unnamed pup"))
     age_raw = escape(str(pup.get("age_raw") or "Age unknown"))
@@ -439,6 +489,7 @@ def _render_page(
         <section class="controls" aria-label="Swipe controls">
           <form id="swipe-nope-form" method="post" action="/swipe">
             <input type="hidden" name="dog_id" value="{dog_id}" />
+            <input type="hidden" name="species" value="{species}" />
             <input type="hidden" name="offset" value="{offset}" />
             {filter_hidden_inputs}
             <input type="hidden" name="swipe" value="left" />
@@ -452,6 +503,7 @@ def _render_page(
           </form>
           <form id="swipe-like-form" method="post" action="/swipe">
             <input type="hidden" name="dog_id" value="{dog_id}" />
+            <input type="hidden" name="species" value="{species}" />
             <input type="hidden" name="offset" value="{offset}" />
             {filter_hidden_inputs}
             <input type="hidden" name="swipe" value="right" />

@@ -16,7 +16,7 @@ except ModuleNotFoundError as exc:  # Optional dependency for DB features
 else:
     _PSYCOPG_IMPORT_ERROR = None
 
-from .models import DogProfile
+from .models import PetProfile
 from .email_utils import sanitize_email, sanitize_emails
 
 
@@ -43,6 +43,16 @@ def _link_id(link: str) -> str:
 
 def _status_id(source: str, link: str) -> str:
     return hashlib.md5(f"{source}:{link}".encode("utf-8")).hexdigest()
+
+
+def _species_from_link(link: str) -> str:
+    """Infer species from known provider URL patterns."""
+    text = str(link or "").strip().lower()
+    if "/showcat/" in text:
+        return "cat"
+    if "/showdog/" in text:
+        return "dog"
+    return "unknown"
 
 
 def get_connection() -> psycopg.Connection:
@@ -165,9 +175,24 @@ def ensure_schema(conn: psycopg.Connection) -> None:
             END $$;
             """)
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS dog_profiles (
+            DO $$
+            BEGIN
+                IF to_regclass('public.pet_profiles') IS NULL
+                   AND to_regclass('public.dog_profiles') IS NOT NULL THEN
+                    ALTER TABLE dog_profiles RENAME TO pet_profiles;
+                END IF;
+                IF to_regclass('public.pet_status') IS NULL
+                   AND to_regclass('public.dog_status') IS NOT NULL THEN
+                    ALTER TABLE dog_status RENAME TO pet_status;
+                END IF;
+            END
+            $$;
+            """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS pet_profiles (
                 id BIGSERIAL PRIMARY KEY,
                 dog_id INTEGER NOT NULL,
+                species TEXT NOT NULL DEFAULT 'dog',
                 url TEXT NOT NULL,
                 name TEXT,
                 breed TEXT,
@@ -181,7 +206,7 @@ def ensure_schema(conn: psycopg.Connection) -> None:
                 description TEXT,
                 media JSONB,
                 scraped_at_utc TIMESTAMPTZ NOT NULL,
-                UNIQUE (dog_id, scraped_at_utc)
+                UNIQUE (dog_id, species, scraped_at_utc)
             );
             """)
         cur.execute("""
@@ -195,8 +220,51 @@ def ensure_schema(conn: psycopg.Connection) -> None:
             );
             """)
         cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_dog_profiles_scraped_at
-            ON dog_profiles (scraped_at_utc DESC);
+            CREATE INDEX IF NOT EXISTS idx_pet_profiles_scraped_at
+            ON pet_profiles (scraped_at_utc DESC);
+            """)
+        cur.execute("""
+            ALTER TABLE pet_profiles
+            ADD COLUMN IF NOT EXISTS species TEXT NOT NULL DEFAULT 'dog';
+            """)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'dog_profiles_dog_id_scraped_at_utc_key'
+                ) THEN
+                    ALTER TABLE pet_profiles
+                    DROP CONSTRAINT dog_profiles_dog_id_scraped_at_utc_key;
+                END IF;
+                IF EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'pet_profiles_dog_id_scraped_at_utc_key'
+                ) THEN
+                    ALTER TABLE pet_profiles
+                    DROP CONSTRAINT pet_profiles_dog_id_scraped_at_utc_key;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'pet_profiles_dog_id_species_scraped_at_utc_key'
+                ) AND NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'dog_profiles_dog_id_species_scraped_at_utc_key'
+                ) THEN
+                    ALTER TABLE pet_profiles
+                    ADD CONSTRAINT pet_profiles_dog_id_species_scraped_at_utc_key
+                    UNIQUE (dog_id, species, scraped_at_utc);
+                END IF;
+            END
+            $$;
+            """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_pet_profiles_species
+            ON pet_profiles (species);
             """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS email_subscribers (
@@ -204,6 +272,18 @@ def ensure_schema(conn: psycopg.Connection) -> None:
                 email TEXT NOT NULL,
                 source TEXT NOT NULL DEFAULT 'unknown',
                 created_at_utc TIMESTAMPTZ NOT NULL
+            );
+            """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS emailed_pet_profiles (
+                id BIGSERIAL PRIMARY KEY,
+                recipient_email TEXT NOT NULL,
+                dog_id INTEGER NOT NULL,
+                species TEXT NOT NULL DEFAULT 'dog',
+                first_sent_at_utc TIMESTAMPTZ NOT NULL,
+                last_sent_at_utc TIMESTAMPTZ NOT NULL,
+                send_count INTEGER NOT NULL DEFAULT 1,
+                UNIQUE (recipient_email, dog_id, species)
             );
             """)
         cur.execute("""
@@ -215,21 +295,34 @@ def ensure_schema(conn: psycopg.Connection) -> None:
             ON email_subscribers (created_at_utc DESC);
             """)
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS dog_status (
+            CREATE INDEX IF NOT EXISTS idx_emailed_pet_profiles_recipient_last_sent
+            ON emailed_pet_profiles (recipient_email, last_sent_at_utc DESC);
+            """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS pet_status (
                 id TEXT PRIMARY KEY,
                 source TEXT NOT NULL,
                 link TEXT NOT NULL,
+                species TEXT NOT NULL DEFAULT 'unknown',
                 is_active BOOLEAN NOT NULL DEFAULT FALSE,
                 last_active_utc TIMESTAMPTZ
             );
             """)
         cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_dog_status_source_active
-            ON dog_status (source, is_active);
+            ALTER TABLE pet_status
+            ADD COLUMN IF NOT EXISTS species TEXT NOT NULL DEFAULT 'unknown';
             """)
         cur.execute("""
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_dog_status_source_link
-            ON dog_status (source, link);
+            CREATE INDEX IF NOT EXISTS idx_pet_status_source_active
+            ON pet_status (source, is_active);
+            """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_pet_status_species
+            ON pet_status (species);
+            """)
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_pet_status_source_link
+            ON pet_status (source, link);
             """)
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_cached_links_fetched_at
@@ -328,7 +421,93 @@ def get_email_subscribers(logger: Logger | None = None) -> list[str]:
     return emails
 
 
-def store_profiles_in_db(profiles: Iterable[DogProfile], logger: Logger) -> None:
+def _normalize_species(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized or "dog"
+
+
+def get_sent_pet_keys(
+    recipient_email: str, logger: Logger | None = None
+) -> set[tuple[int, str]]:
+    """Load previously emailed pet keys for one recipient."""
+    _require_psycopg()
+    recipient = sanitize_email(recipient_email)
+    if not recipient:
+        return set()
+
+    with get_connection() as conn:
+        ensure_schema(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT dog_id, species
+                FROM emailed_pet_profiles
+                WHERE recipient_email = %s;
+                """,
+                (recipient,),
+            )
+            rows = cur.fetchall()
+
+    keys = {
+        (int(row[0]), _normalize_species(str(row[1]) if row[1] is not None else None))
+        for row in rows
+        if row and row[0] is not None
+    }
+    if logger:
+        logger.info(f"Loaded {len(keys)} emailed pet keys for {recipient}.")
+    return keys
+
+
+def mark_pet_profiles_emailed(
+    recipient_email: str,
+    profiles: Iterable[PetProfile],
+    logger: Logger | None = None,
+) -> None:
+    """Record that profiles were included in an email to recipient."""
+    _require_psycopg()
+    recipient = sanitize_email(recipient_email)
+    if not recipient:
+        return
+
+    deduped_keys: set[tuple[int, str]] = set()
+    for profile in profiles:
+        deduped_keys.add((int(profile.pet_id), _normalize_species(profile.species)))
+    if not deduped_keys:
+        return
+
+    sent_at = datetime.now(timezone.utc)
+    with get_connection() as conn:
+        ensure_schema(conn)
+        with conn.cursor() as cur:
+            cur.executemany(
+                """
+                INSERT INTO emailed_pet_profiles (
+                    recipient_email,
+                    dog_id,
+                    species,
+                    first_sent_at_utc,
+                    last_sent_at_utc,
+                    send_count
+                )
+                VALUES (%s, %s, %s, %s, %s, 1)
+                ON CONFLICT (recipient_email, dog_id, species)
+                DO UPDATE SET
+                    last_sent_at_utc = EXCLUDED.last_sent_at_utc,
+                    send_count = emailed_pet_profiles.send_count + 1;
+                """,
+                [
+                    (recipient, dog_id, species, sent_at, sent_at)
+                    for dog_id, species in sorted(deduped_keys)
+                ],
+            )
+        conn.commit()
+    if logger:
+        logger.info(
+            f"Updated emailed history for {len(deduped_keys)} pets to {recipient}."
+        )
+
+
+def store_profiles_in_db(profiles: Iterable[PetProfile], logger: Logger) -> None:
     _require_psycopg()
     profiles = list(profiles)
     if not profiles:
@@ -339,8 +518,9 @@ def store_profiles_in_db(profiles: Iterable[DogProfile], logger: Logger) -> None
         with conn.cursor() as cur:
             cur.executemany(
                 """
-                INSERT INTO dog_profiles (
+                INSERT INTO pet_profiles (
                     dog_id,
+                    species,
                     url,
                     name,
                     breed,
@@ -357,6 +537,7 @@ def store_profiles_in_db(profiles: Iterable[DogProfile], logger: Logger) -> None
                 )
                 VALUES (
                     %(dog_id)s,
+                    %(species)s,
                     %(url)s,
                     %(name)s,
                     %(breed)s,
@@ -371,11 +552,12 @@ def store_profiles_in_db(profiles: Iterable[DogProfile], logger: Logger) -> None
                     %(media)s,
                     %(scraped_at_utc)s
                 )
-                ON CONFLICT (dog_id, scraped_at_utc) DO NOTHING;
+                ON CONFLICT (dog_id, species, scraped_at_utc) DO NOTHING;
                 """,
                 [
                     {
                         "dog_id": p.dog_id,
+                        "species": p.species,
                         "url": p.url,
                         "name": p.name,
                         "breed": p.breed,
@@ -404,7 +586,12 @@ def store_profiles_in_db(profiles: Iterable[DogProfile], logger: Logger) -> None
         logger.info(f"Stored {len(profiles)} profiles.")
 
 
-def store_dog_status(
+def store_pet_profiles_in_db(profiles: Iterable[PetProfile], logger: Logger) -> None:
+    """Store scraped pet profiles in Postgres."""
+    store_profiles_in_db(profiles, logger=logger)
+
+
+def store_pet_status(
     source: str, links: list[str], logger: Logger | None = None
 ) -> None:
     _require_psycopg()
@@ -414,7 +601,7 @@ def store_dog_status(
         fetched_at = datetime.now(timezone.utc)
         with conn.cursor() as cur:
             cur.execute("""
-                UPDATE dog_status
+                UPDATE pet_status
                 SET is_active = false
                 WHERE is_active = true
                   AND source = %s;
@@ -422,22 +609,30 @@ def store_dog_status(
             if unique_links:
                 cur.executemany(
                     """
-                    INSERT INTO dog_status (
+                    INSERT INTO pet_status (
                         id,
                         source,
                         link,
+                        species,
                         is_active,
                         last_active_utc
                     )
-                    VALUES (%s, %s, %s, true, %s)
+                    VALUES (%s, %s, %s, %s, true, %s)
                     ON CONFLICT (id) DO UPDATE
                         SET source = EXCLUDED.source,
                             link = EXCLUDED.link,
+                            species = EXCLUDED.species,
                             is_active = true,
                             last_active_utc = EXCLUDED.last_active_utc;
                     """,
                     [
-                        (_status_id(source, link), source, link, fetched_at)
+                        (
+                            _status_id(source, link),
+                            source,
+                            link,
+                            _species_from_link(link),
+                            fetched_at,
+                        )
                         for link in unique_links
                     ],
                 )
@@ -445,10 +640,17 @@ def store_dog_status(
     if logger:
         if unique_links:
             logger.info(
-                f"Stored {len(unique_links)} active dog links for {source}."
+                f"Stored {len(unique_links)} active pet links for {source}."
             )
         else:
-            logger.info(f"Marked dog links inactive for {source} (empty batch).")
+            logger.info(f"Marked pet links inactive for {source} (empty batch).")
+
+
+def store_dog_status(
+    source: str, links: list[str], logger: Logger | None = None
+) -> None:
+    """Backward-compatible alias for store_pet_status."""
+    store_pet_status(source=source, links=links, logger=logger)
 
 def get_cached_links(
     source: str, max_age_seconds: int, logger: Logger | None = None

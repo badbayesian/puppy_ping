@@ -101,8 +101,8 @@ Compose layering rules:
 The scraper uses composition to support multiple providers without hard-coding provider logic into the runner:
 
 - `puppyping/server.py` iterates `SOURCES` and calls generic provider entry points.
-- `puppyping/providers/__init__.py` composes source-specific implementations through `FETCH_LINKS` and `FETCH_PROFILE` registries.
-- Each provider module implements the same contracts (`fetch_adoptable_dog_profile_links_*` and `fetch_dog_profile_*`) and is registered once.
+- `puppyping/providers/__init__.py` composes source-specific implementations through `FETCH_PET_LINKS` and `FETCH_PET_PROFILE` registries.
+- Each provider module implements the same contracts (`fetch_adoptable_pet_profile_links_*` and `fetch_pet_profile_*`) and is registered once.
 - To add another provider, implement the two functions in a new provider module and register it in the two maps; the scraper loop can use it immediately.
 
 ## Setup
