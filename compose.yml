@@ -1,8 +1,11 @@
 services:
   puppyping:
     build:
-      context: /mnt/thebutler/media/repos/puppy_ping
+      context: . #/mnt/thebutler/media/repos/puppy_ping
       dockerfile: Dockerfile
+      args:
+        APP_GIT_COMMIT: ${APP_GIT_COMMIT:-unknown}
+        APP_GIT_BRANCH: ${APP_GIT_BRANCH:-unknown}
     container_name: puppyping-scraper
     environment:
       TZ: America/Chicago
@@ -70,8 +73,11 @@ services:
 
   pupswipe:
     build:
-      context: /mnt/thebutler/media/repos/puppy_ping
+      context: . #/mnt/thebutler/media/repos/puppy_ping
       dockerfile: Dockerfile
+      args:
+        APP_GIT_COMMIT: ${APP_GIT_COMMIT:-unknown}
+        APP_GIT_BRANCH: ${APP_GIT_BRANCH:-unknown}
     container_name: puppyping-pupswipe
     pull_policy: always
     environment:

@@ -1,6 +1,7 @@
 import argparse
-import os
+import concurrent.futures
 import logging
+import os
 from typing import Optional
 
 from .db import (
@@ -40,27 +41,69 @@ def __safe_less_than(a: Optional[float], b: float | int) -> bool:
     return a is not None and a < b
 
 
+def _scrape_source(source: str, store_in_db: bool) -> tuple[str, set[str], list, int]:
+    """Fetch links and profiles for a single provider source.
+
+    Args:
+        source: Provider source key.
+        store_in_db: Whether DB-related source behavior should be enabled.
+
+    Returns:
+        Tuple of source key, fetched links, profiles, and failed profile count.
+    """
+    links = fetch_adoptable_pet_profile_links(source, store_in_db)
+    ordered_links = sorted(links)
+    total_links = len(ordered_links)
+    if total_links == 0:
+        logger.info(f"[{source}] No animals to scrape.")
+        return source, links, [], 0
+
+    logger.info(f"[{source}] Starting scrape for {total_links} animals.")
+    profiles = []
+    failed_profiles = 0
+    for processed_count, url in enumerate(
+        tqdm(ordered_links, desc=f"Fetching profiles for {source}"),
+        start=1,
+    ):
+        try:
+            profiles.append(fetch_pet_profile(source, url))
+        except Exception as exc:
+            failed_profiles += 1
+            logger.warning(f"Skipping profile due to fetch error for {url}: {exc}")
+        remaining_count = total_links - processed_count
+        logger.info(
+            f"[{source}] processed={processed_count} remaining={remaining_count}"
+        )
+    logger.info(
+        f"[{source}] Completed scrape. success={len(profiles)} failed={failed_profiles} remaining=0"
+    )
+    return source, links, profiles, failed_profiles
+
+
 def run(
     send_ping: bool = True, store_in_db: bool = True, max_age: float = 8.0
 ) -> None:
     """Run one scrape/email cycle."""
     logger.info(f"Starting scrape run.")
 
-    links_by_source = {
-        source: fetch_adoptable_pet_profile_links(source, store_in_db) for source in SOURCES
-    }
+    links_by_source = {}
+    profiles = []
+    failed_profiles = 0
+    max_workers = max(1, len(SOURCES))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [
+            executor.submit(_scrape_source, source, store_in_db)
+            for source in SOURCES
+        ]
+        for future in concurrent.futures.as_completed(futures):
+            source, links, source_profiles, source_failed_profiles = future.result()
+            links_by_source[source] = links
+            profiles.extend(source_profiles)
+            failed_profiles += source_failed_profiles
+
     if store_in_db:
         for source, urls in links_by_source.items():
             store_pet_status(source, list(urls), logger=logger)
-    profiles = []
-    failed_profiles = 0
-    for source, urls in links_by_source.items():
-        for url in tqdm(urls, desc=f"Fetching profiles for {source}"):
-            try:
-                profiles.append(fetch_pet_profile(source, url))
-            except Exception as exc:
-                failed_profiles += 1
-                logger.warning(f"Skipping profile due to fetch error for {url}: {exc}")
 
     if failed_profiles:
         logger.warning(f"Skipped {failed_profiles} profile(s) due to fetch errors.")

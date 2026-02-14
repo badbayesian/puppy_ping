@@ -1,180 +1,195 @@
 # Database Schema
 
-This document describes the current Postgres schema created by:
+This document summarizes the Postgres tables created/managed by:
 
-- `puppyping/db.py` via `ensure_schema(...)`
-- `puppyping/pupswipe/server.py` via `_ensure_app_schema(...)`
+- `puppyping/db.py` (`ensure_schema`)
+- `puppyping/pupswipe/repository.py` (`ensure_app_schema`)
 
-## Tables
+The current schema is pet-centric (`pet_*`), with migration logic to rename/upgrade legacy `dog_*` tables.
 
-### `dog_profiles`
+## Core Scraper Tables
 
-Historical snapshot table for scraped dog profiles.
+### `pet_profiles`
 
-| Column | Type | Null | Default | Notes |
-|---|---|---|---|---|
-| `id` | `BIGSERIAL` | No | auto | Primary key |
-| `dog_id` | `INTEGER` | No | - | Source dog identifier |
-| `url` | `TEXT` | No | - | Profile URL |
-| `name` | `TEXT` | Yes | `NULL` | Parsed dog name |
-| `breed` | `TEXT` | Yes | `NULL` | Parsed breed |
-| `gender` | `TEXT` | Yes | `NULL` | Parsed gender |
-| `age_raw` | `TEXT` | Yes | `NULL` | Raw age string |
-| `age_months` | `NUMERIC` | Yes | `NULL` | Parsed numeric age |
-| `weight_lbs` | `NUMERIC` | Yes | `NULL` | Parsed numeric weight |
-| `location` | `TEXT` | Yes | `NULL` | Source location |
-| `status` | `TEXT` | Yes | `NULL` | Source status text |
-| `ratings` | `JSONB` | Yes | `NULL` | Provider-specific rating fields |
-| `description` | `TEXT` | Yes | `NULL` | Long description |
-| `media` | `JSONB` | Yes | `NULL` | Media payload (images/videos/embeds) |
-| `scraped_at_utc` | `TIMESTAMPTZ` | No | - | Snapshot timestamp |
+Historical snapshots of scraped pet profiles.
 
-Constraints and indexes:
+Key columns:
 
-- Primary key: `dog_profiles_pkey (id)`
-- Unique: `(dog_id, scraped_at_utc)`
-- Index: `idx_dog_profiles_scraped_at (scraped_at_utc DESC)`
+- `pet_id`
+- `species`
+- profile fields (`url`, `name`, `breed`, `gender`, `age_raw`, `age_months`, `weight_lbs`, `location`, `status`, `ratings`, `description`, `media`)
+- `scraped_at_utc`
+
+Key constraints/indexes:
+
+- unique on (`pet_id`, `species`, `scraped_at_utc`)
+- index on `scraped_at_utc DESC`
+- index on `pet_id`
+- index on `species`
 
 ### `cached_links`
 
-Per-source cached profile links and freshness state.
+Per-source fetched links and active state.
 
-| Column | Type | Null | Default | Notes |
-|---|---|---|---|---|
-| `id` | `TEXT` | No | - | Primary key, md5 hash of `link` |
-| `source` | `TEXT` | No | `'unknown'` | Provider/source name |
-| `link` | `TEXT` | No | - | Profile URL |
-| `fetched_at_utc` | `TIMESTAMPTZ` | No | - | Fetch timestamp |
-| `is_active` | `BOOLEAN` | No | `FALSE` | Active in current batch for source |
-| `last_active_utc` | `TIMESTAMPTZ` | Yes | `NULL` | Last time observed active |
+Key columns:
 
-Constraints and indexes:
+- `id` (hash key)
+- `source`
+- `link`
+- `fetched_at_utc`
+- `is_active`
+- `last_active_utc`
 
-- Primary key: `cached_links_pkey (id)`
-- Unique index: `idx_cached_links_link (link)`
-- Index: `idx_cached_links_fetched_at (fetched_at_utc DESC)`
-- Index: `idx_cached_links_source_active (source, is_active)`
+Key constraints/indexes:
 
-Migration notes handled by `ensure_schema(...)`:
+- primary key on `id`
+- unique index on `link`
+- index on (`source`, `is_active`)
+- index on `fetched_at_utc DESC`
 
-- Converts legacy `links` array-based schema into one-row-per-link form.
-- Converts non-text `id` variants to text hash IDs.
+### `pet_status`
+
+Current active/inactive status by provider+link.
+
+Key columns:
+
+- `id` (hash key)
+- `source`
+- `link`
+- `species`
+- `is_active`
+- `last_active_utc`
+
+Key constraints/indexes:
+
+- primary key on `id`
+- unique index on (`source`, `link`)
+- index on (`source`, `is_active`)
+- index on `species`
 
 ### `email_subscribers`
 
-Email subscriptions for PuppyPing notifications.
+Email subscription list for alert recipients.
 
-| Column | Type | Null | Default | Notes |
-|---|---|---|---|---|
-| `id` | `BIGSERIAL` | No | auto | Primary key |
-| `email` | `TEXT` | No | - | Normalized email value |
-| `source` | `TEXT` | No | `'unknown'` | Subscription source (for example `pupswipe`) |
-| `created_at_utc` | `TIMESTAMPTZ` | No | - | Subscription creation timestamp |
+Key columns:
 
-Constraints and indexes:
+- `email`
+- `source`
+- `created_at_utc`
 
-- Primary key: `email_subscribers_pkey (id)`
-- Unique index: `idx_email_subscribers_email_lower (LOWER(email))`
-- Index: `idx_email_subscribers_created_at (created_at_utc DESC)`
+Key constraints/indexes:
 
-### `dog_status`
+- unique index on `LOWER(email)`
+- index on `created_at_utc DESC`
 
-Current active/inactive status of links by source.
+### `emailed_pet_profiles`
 
-| Column | Type | Null | Default | Notes |
-|---|---|---|---|---|
-| `id` | `TEXT` | No | - | Primary key, md5 hash of `source:link` |
-| `source` | `TEXT` | No | - | Provider/source name |
-| `link` | `TEXT` | No | - | Profile URL |
-| `is_active` | `BOOLEAN` | No | `FALSE` | Active in current batch for source |
-| `last_active_utc` | `TIMESTAMPTZ` | Yes | `NULL` | Last observed active timestamp |
+Tracks which pet profiles have been emailed to each recipient.
 
-Constraints and indexes:
+Key columns:
 
-- Primary key: `dog_status_pkey (id)`
-- Unique index: `idx_dog_status_source_link (source, link)`
-- Index: `idx_dog_status_source_active (source, is_active)`
+- `recipient_email`
+- `pet_id`
+- `species`
+- `first_sent_at_utc`
+- `last_sent_at_utc`
+- `send_count`
 
-### `dog_swipes`
+Key constraints/indexes:
 
-PupSwipe interaction events and lightweight client metadata.
+- unique on (`recipient_email`, `pet_id`, `species`)
+- index on (`recipient_email`, `last_sent_at_utc DESC`)
 
-| Column | Type | Null | Default | Notes |
-|---|---|---|---|---|
-| `id` | `BIGSERIAL` | No | auto | Primary key |
-| `dog_id` | `INTEGER` | No | - | Dog identifier tied to swipe |
-| `swipe` | `TEXT` | No | - | Constrained to `left` or `right` |
-| `source` | `TEXT` | Yes | `NULL` | Event source (usually `pupswipe`) |
-| `created_at_utc` | `TIMESTAMPTZ` | No | - | Event timestamp |
-| `user_key` | `TEXT` | Yes | `NULL` | Derived fingerprint key |
-| `user_ip` | `TEXT` | Yes | `NULL` | Client IP |
-| `user_agent` | `TEXT` | Yes | `NULL` | Client user agent |
-| `accept_language` | `TEXT` | Yes | `NULL` | Client language header |
-| `screen_info` | `JSONB` | Yes | `NULL` | Client hint / viewport metadata |
+## PupSwipe Tables
 
-Constraints and indexes:
+### `users`
 
-- Primary key: `dog_swipes_pkey (id)`
-- Check constraint: `swipe IN ('left', 'right')`
-- Index: `idx_dog_swipes_created_at (created_at_utc DESC)`
-- Index: `idx_dog_swipes_dog_id (dog_id)`
-- Index: `idx_dog_swipes_user_key (user_key)`
+PupSwipe accounts.
+
+Key columns:
+
+- `email` (unique)
+- `password_hash`
+- `created_at_utc`
+- `last_seen_at_utc`
+
+### `pet_swipes`
+
+Swipe interaction events.
+
+Key columns:
+
+- `pet_id`
+- `species`
+- `swipe` (`left` or `right`)
+- `source`
+- `created_at_utc`
+- optional user/client metadata (`user_id`, `user_key`, `user_ip`, `user_agent`, `accept_language`, `screen_info`)
+
+Key constraints/indexes:
+
+- check constraint on `swipe` values
+- optional FK `user_id -> users.id` (`ON DELETE SET NULL`)
+- index on `created_at_utc DESC`
+- index on `pet_id`
+- index on `species`
+- index on `user_id`
+- index on `user_key`
+
+### `pet_likes`
+
+Per-user liked pets.
+
+Key columns:
+
+- `user_id`
+- `pet_id`
+- `species`
+- `source`
+- `created_at_utc`
+
+Key constraints/indexes:
+
+- FK `user_id -> users.id` (`ON DELETE CASCADE`)
+- unique on (`user_id`, `pet_id`, `species`)
+- index on (`user_id`, `created_at_utc DESC`)
+- index on `pet_id`
+- index on `species`
+
+### `password_reset_tokens`
+
+Hashed one-time reset tokens.
+
+Key columns:
+
+- `user_id`
+- `token_hash`
+- `created_at_utc`
+- `expires_at_utc`
+- `used_at_utc`
+
+Key constraints/indexes:
+
+- unique on `token_hash`
+- FK `user_id -> users.id` (`ON DELETE CASCADE`)
+- index on (`user_id`, `created_at_utc DESC`)
+- index on `expires_at_utc DESC`
 
 ## Relationships
 
-The schema does not enforce foreign keys between tables. Logical relationships are:
+Enforced with FKs:
 
-- `dog_swipes.dog_id` -> latest `dog_profiles.dog_id` rows
-- `cached_links.link` and `dog_status.link` -> `dog_profiles.url`
-- `dog_status.source` and `cached_links.source` align with provider names (for example `paws_chicago`, `wright_way`)
+- `pet_swipes.user_id -> users.id`
+- `pet_likes.user_id -> users.id`
+- `password_reset_tokens.user_id -> users.id`
 
-## ERD
+Logical joins used by queries:
 
-The ERD below shows logical relationships used by the application.
-These relationships are not enforced by database foreign key constraints.
+- `pet_profiles.url` <-> `pet_status.link`
+- `pet_profiles` <-> `pet_swipes` via (`pet_id`, `species`)
+- `pet_profiles` <-> `pet_likes` via (`pet_id`, `species`)
 
-```mermaid
-erDiagram
-    DOG_PROFILES {
-        bigint id PK
-        int dog_id
-        text url
-        timestamptz scraped_at_utc
-    }
+## Notes
 
-    CACHED_LINKS {
-        text id PK
-        text source
-        text link
-        bool is_active
-        timestamptz fetched_at_utc
-    }
-
-    DOG_STATUS {
-        text id PK
-        text source
-        text link
-        bool is_active
-        timestamptz last_active_utc
-    }
-
-    DOG_SWIPES {
-        bigint id PK
-        int dog_id
-        text swipe
-        text source
-        timestamptz created_at_utc
-    }
-
-    EMAIL_SUBSCRIBERS {
-        bigint id PK
-        text email
-        text source
-        timestamptz created_at_utc
-    }
-
-    DOG_PROFILES ||--o{ DOG_SWIPES : "logical via dog_id"
-    DOG_PROFILES ||--o{ CACHED_LINKS : "logical via url -> link"
-    DOG_PROFILES ||--o{ DOG_STATUS : "logical via url -> link"
-    CACHED_LINKS ||--|| DOG_STATUS : "logical alignment by source+link"
-```
+- Migration blocks in schema setup can rename legacy `dog_*` tables to `pet_*`.
+- API payloads and rendering still include some `dog_id` compatibility fields in server code for transition safety.

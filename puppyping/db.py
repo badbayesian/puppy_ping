@@ -191,7 +191,7 @@ def ensure_schema(conn: psycopg.Connection) -> None:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS pet_profiles (
                 id BIGSERIAL PRIMARY KEY,
-                dog_id INTEGER NOT NULL,
+                pet_id INTEGER NOT NULL,
                 species TEXT NOT NULL DEFAULT 'dog',
                 url TEXT NOT NULL,
                 name TEXT,
@@ -206,7 +206,7 @@ def ensure_schema(conn: psycopg.Connection) -> None:
                 description TEXT,
                 media JSONB,
                 scraped_at_utc TIMESTAMPTZ NOT NULL,
-                UNIQUE (dog_id, species, scraped_at_utc)
+                UNIQUE (pet_id, species, scraped_at_utc)
             );
             """)
         cur.execute("""
@@ -232,6 +232,37 @@ def ensure_schema(conn: psycopg.Connection) -> None:
             BEGIN
                 IF EXISTS (
                     SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'pet_profiles'
+                      AND column_name = 'dog_id'
+                ) THEN
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = 'pet_profiles'
+                          AND column_name = 'pet_id'
+                    ) THEN
+                        ALTER TABLE pet_profiles
+                        ADD COLUMN pet_id INTEGER;
+                    END IF;
+                    UPDATE pet_profiles
+                    SET pet_id = COALESCE(pet_id, dog_id)
+                    WHERE pet_id IS NULL;
+                END IF;
+            END
+            $$;
+            """)
+        cur.execute("""
+            ALTER TABLE pet_profiles
+            ALTER COLUMN pet_id SET NOT NULL;
+            """)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1
                     FROM pg_constraint
                     WHERE conname = 'dog_profiles_dog_id_scraped_at_utc_key'
                 ) THEN
@@ -249,22 +280,38 @@ def ensure_schema(conn: psycopg.Connection) -> None:
                 IF NOT EXISTS (
                     SELECT 1
                     FROM pg_constraint
-                    WHERE conname = 'pet_profiles_dog_id_species_scraped_at_utc_key'
+                    WHERE conname = 'pet_profiles_pet_id_species_scraped_at_utc_key'
                 ) AND NOT EXISTS (
                     SELECT 1
                     FROM pg_constraint
                     WHERE conname = 'dog_profiles_dog_id_species_scraped_at_utc_key'
+                ) AND NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'pet_profiles_dog_id_species_scraped_at_utc_key'
                 ) THEN
                     ALTER TABLE pet_profiles
-                    ADD CONSTRAINT pet_profiles_dog_id_species_scraped_at_utc_key
-                    UNIQUE (dog_id, species, scraped_at_utc);
+                    ADD CONSTRAINT pet_profiles_pet_id_species_scraped_at_utc_key
+                    UNIQUE (pet_id, species, scraped_at_utc);
                 END IF;
             END
             $$;
             """)
         cur.execute("""
+            ALTER TABLE pet_profiles
+            DROP CONSTRAINT IF EXISTS pet_profiles_dog_id_species_scraped_at_utc_key;
+            """)
+        cur.execute("""
+            ALTER TABLE pet_profiles
+            DROP COLUMN IF EXISTS dog_id;
+            """)
+        cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_pet_profiles_species
             ON pet_profiles (species);
+            """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_pet_profiles_pet_id
+            ON pet_profiles (pet_id);
             """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS email_subscribers (
@@ -278,13 +325,61 @@ def ensure_schema(conn: psycopg.Connection) -> None:
             CREATE TABLE IF NOT EXISTS emailed_pet_profiles (
                 id BIGSERIAL PRIMARY KEY,
                 recipient_email TEXT NOT NULL,
-                dog_id INTEGER NOT NULL,
+                pet_id INTEGER NOT NULL,
                 species TEXT NOT NULL DEFAULT 'dog',
                 first_sent_at_utc TIMESTAMPTZ NOT NULL,
                 last_sent_at_utc TIMESTAMPTZ NOT NULL,
                 send_count INTEGER NOT NULL DEFAULT 1,
-                UNIQUE (recipient_email, dog_id, species)
+                UNIQUE (recipient_email, pet_id, species)
             );
+            """)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'emailed_pet_profiles'
+                      AND column_name = 'dog_id'
+                ) THEN
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = 'emailed_pet_profiles'
+                          AND column_name = 'pet_id'
+                    ) THEN
+                        ALTER TABLE emailed_pet_profiles
+                        ADD COLUMN pet_id INTEGER;
+                    END IF;
+                    UPDATE emailed_pet_profiles
+                    SET pet_id = COALESCE(pet_id, dog_id)
+                    WHERE pet_id IS NULL;
+                END IF;
+            END
+            $$;
+            """)
+        cur.execute("""
+            ALTER TABLE emailed_pet_profiles
+            ALTER COLUMN pet_id SET NOT NULL;
+            """)
+        cur.execute("""
+            ALTER TABLE emailed_pet_profiles
+            DROP CONSTRAINT IF EXISTS emailed_pet_profiles_recipient_email_dog_id_species_key;
+            """)
+        cur.execute("""
+            ALTER TABLE emailed_pet_profiles
+            DROP CONSTRAINT IF EXISTS emailed_pet_profiles_recipient_email_pet_id_species_key;
+            """)
+        cur.execute("""
+            ALTER TABLE emailed_pet_profiles
+            ADD CONSTRAINT emailed_pet_profiles_recipient_email_pet_id_species_key
+            UNIQUE (recipient_email, pet_id, species);
+            """)
+        cur.execute("""
+            ALTER TABLE emailed_pet_profiles
+            DROP COLUMN IF EXISTS dog_id;
             """)
         cur.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_email_subscribers_email_lower
@@ -440,7 +535,7 @@ def get_sent_pet_keys(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT dog_id, species
+                SELECT pet_id, species
                 FROM emailed_pet_profiles
                 WHERE recipient_email = %s;
                 """,
@@ -483,21 +578,21 @@ def mark_pet_profiles_emailed(
                 """
                 INSERT INTO emailed_pet_profiles (
                     recipient_email,
-                    dog_id,
+                    pet_id,
                     species,
                     first_sent_at_utc,
                     last_sent_at_utc,
                     send_count
                 )
                 VALUES (%s, %s, %s, %s, %s, 1)
-                ON CONFLICT (recipient_email, dog_id, species)
+                ON CONFLICT (recipient_email, pet_id, species)
                 DO UPDATE SET
                     last_sent_at_utc = EXCLUDED.last_sent_at_utc,
                     send_count = emailed_pet_profiles.send_count + 1;
                 """,
                 [
-                    (recipient, dog_id, species, sent_at, sent_at)
-                    for dog_id, species in sorted(deduped_keys)
+                    (recipient, pet_id, species, sent_at, sent_at)
+                    for pet_id, species in sorted(deduped_keys)
                 ],
             )
         conn.commit()
@@ -519,7 +614,7 @@ def store_profiles_in_db(profiles: Iterable[PetProfile], logger: Logger) -> None
             cur.executemany(
                 """
                 INSERT INTO pet_profiles (
-                    dog_id,
+                    pet_id,
                     species,
                     url,
                     name,
@@ -536,7 +631,7 @@ def store_profiles_in_db(profiles: Iterable[PetProfile], logger: Logger) -> None
                     scraped_at_utc
                 )
                 VALUES (
-                    %(dog_id)s,
+                    %(pet_id)s,
                     %(species)s,
                     %(url)s,
                     %(name)s,
@@ -552,11 +647,11 @@ def store_profiles_in_db(profiles: Iterable[PetProfile], logger: Logger) -> None
                     %(media)s,
                     %(scraped_at_utc)s
                 )
-                ON CONFLICT (dog_id, species, scraped_at_utc) DO NOTHING;
+                ON CONFLICT (pet_id, species, scraped_at_utc) DO NOTHING;
                 """,
                 [
                     {
-                        "dog_id": p.dog_id,
+                        "pet_id": p.pet_id,
                         "species": p.species,
                         "url": p.url,
                         "name": p.name,

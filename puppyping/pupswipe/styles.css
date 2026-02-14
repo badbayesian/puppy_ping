@@ -202,13 +202,13 @@ body {
 }
 
 .filter-strip {
-  width: min(92vw, 640px);
+  width: min(96vw, 1020px);
   margin: 0 auto;
 }
 
 .breed-filter-form {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) auto auto;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
   align-items: end;
   gap: 10px;
   border-radius: 14px;
@@ -233,6 +233,7 @@ body {
 }
 
 .breed-filter-form input[type="text"],
+.breed-filter-form input[type="number"],
 .breed-filter-form select {
   width: 100%;
   min-height: 40px;
@@ -317,6 +318,117 @@ main {
   background: linear-gradient(145deg, rgba(255, 255, 255, 0.94), rgba(255, 238, 236, 0.9));
 }
 
+.state-complete {
+  position: relative;
+  overflow: hidden;
+  border-color: rgba(24, 128, 94, 0.34);
+  background: linear-gradient(155deg, rgba(255, 255, 255, 0.95), rgba(223, 248, 238, 0.9));
+}
+
+.state-complete::before {
+  display: none;
+}
+
+.complete-title {
+  margin: 0;
+  font-family: "Fraunces", "Times New Roman", serif;
+  font-size: clamp(1.42rem, 3vw, 1.9rem);
+  color: #0e5b43;
+  animation: complete-pop 300ms ease-out both;
+}
+
+.complete-copy {
+  margin: 10px 0 0;
+  font-size: 0.96rem;
+  color: #305347;
+  max-width: 260px;
+}
+
+.celebrate-burst {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.burst-dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.4);
+  animation: burst-pop 720ms ease-out both;
+}
+
+.dot-a {
+  background: #ff7a59;
+  animation-delay: 20ms;
+  --x: -112px;
+  --y: -92px;
+}
+
+.dot-b {
+  background: #1b9f79;
+  animation-delay: 70ms;
+  --x: -48px;
+  --y: -118px;
+}
+
+.dot-c {
+  background: #f0a437;
+  animation-delay: 100ms;
+  --x: 98px;
+  --y: -84px;
+}
+
+.dot-d {
+  background: #c84b3f;
+  animation-delay: 140ms;
+  --x: 120px;
+  --y: 30px;
+}
+
+.dot-e {
+  background: #55a4e0;
+  animation-delay: 180ms;
+  --x: -98px;
+  --y: 66px;
+}
+
+.dot-f {
+  background: #7dba66;
+  animation-delay: 220ms;
+  --x: 18px;
+  --y: 110px;
+}
+
+@keyframes complete-pop {
+  0% {
+    transform: scale(0.92);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes burst-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.35);
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(calc(-50% + var(--x)), calc(-50% + var(--y))) scale(1);
+  }
+}
+
 .card {
   position: absolute;
   inset: 0;
@@ -384,6 +496,10 @@ main {
   opacity: 0;
   transform: scale(0.92);
   transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.card-photo.has-carousel .swipe-indicator {
+  top: 66px;
 }
 
 .swipe-indicator.like {
@@ -521,8 +637,22 @@ main {
   gap: var(--space-2);
 }
 
+.card-photo .carousel-controls {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 3;
+  pointer-events: none;
+}
+
 .carousel-controls form {
   margin: 0;
+}
+
+.card-photo .carousel-controls form,
+.card-photo .carousel-controls .carousel-middle {
+  pointer-events: auto;
 }
 
 .carousel-btn {
@@ -539,6 +669,12 @@ main {
   font-weight: 700;
 }
 
+.card-photo .carousel-btn {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(24, 22, 19, 0.12);
+  box-shadow: 0 10px 18px rgba(24, 22, 19, 0.2);
+}
+
 .carousel-btn:hover {
   background: rgba(24, 22, 19, 0.15);
 }
@@ -547,6 +683,15 @@ main {
   display: grid;
   gap: 5px;
   justify-items: center;
+}
+
+.card-photo .carousel-middle {
+  min-height: 38px;
+  border-radius: 999px;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(24, 22, 19, 0.12);
+  box-shadow: 0 10px 18px rgba(24, 22, 19, 0.12);
 }
 
 .carousel-meta {
@@ -1007,6 +1152,27 @@ main {
 
   .card-photo {
     flex-basis: clamp(210px, 42vh, 360px);
+  }
+
+  .card-photo .carousel-controls {
+    top: 8px;
+    left: 8px;
+    right: 8px;
+  }
+
+  .card-photo .carousel-btn {
+    min-height: 34px;
+    padding: 6px 10px;
+    font-size: 0.7rem;
+  }
+
+  .card-photo .carousel-middle {
+    min-height: 34px;
+    padding: 5px 10px;
+  }
+
+  .card-photo.has-carousel .swipe-indicator {
+    top: 56px;
   }
 
   .controls {

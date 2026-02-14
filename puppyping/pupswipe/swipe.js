@@ -1,4 +1,47 @@
 (() => {
+  const filterForm =
+    document.getElementById("auto-filter-form") ||
+    document.querySelector("form.breed-filter-form[data-auto-filter='1']");
+  if (!filterForm) {
+    return;
+  }
+
+  let submitTimer = null;
+  let isSubmitting = false;
+
+  function submitFilters() {
+    if (isSubmitting) {
+      return;
+    }
+    isSubmitting = true;
+    if (typeof filterForm.requestSubmit === "function") {
+      filterForm.requestSubmit();
+      return;
+    }
+    filterForm.submit();
+  }
+
+  function scheduleSubmit() {
+    window.clearTimeout(submitTimer);
+    submitTimer = window.setTimeout(submitFilters, 350);
+  }
+
+  const textInputs = filterForm.querySelectorAll(
+    "input[type='text'], input[type='number']"
+  );
+  const selects = filterForm.querySelectorAll("select");
+
+  textInputs.forEach((input) => {
+    input.addEventListener("input", scheduleSubmit);
+    input.addEventListener("change", scheduleSubmit);
+  });
+
+  selects.forEach((select) => {
+    select.addEventListener("change", submitFilters);
+  });
+})();
+
+(() => {
   const card = document.getElementById("swipe-card");
   const nopeForm = document.getElementById("swipe-nope-form");
   const likeForm = document.getElementById("swipe-like-form");

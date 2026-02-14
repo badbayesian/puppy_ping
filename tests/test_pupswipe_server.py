@@ -11,7 +11,7 @@ class DummyCursor:
 
     def execute(self, query, params=None):
         self.executed.append((query, params))
-        if "SELECT *" in query:
+        if "SELECT *" in query or "SELECT active.*" in query:
             self.description = [
                 SimpleNamespace(name="dog_id"),
                 SimpleNamespace(name="species"),
@@ -97,7 +97,7 @@ def test_fetch_puppies_queries_multiple_sources(monkeypatch):
     monkeypatch.setattr(pupswipe, "_ensure_app_schema", lambda _conn: None)
     monkeypatch.setattr(pupswipe, "PUPSWIPE_SOURCES", ("paws_chicago", "wright_way"))
 
-    puppies = pupswipe._fetch_puppies(limit=1, offset=0)
+    puppies = pupswipe._fetch_puppies(limit=1)
 
     assert len(puppies) == 1
     assert puppies[0]["primary_image"] == "https://g.petango.com/photos/364/a.jpg"
@@ -106,6 +106,7 @@ def test_fetch_puppies_queries_multiple_sources(monkeypatch):
     assert "COALESCE(species, '') = %s" in query
     assert "COALESCE(breed, '') ILIKE %s ESCAPE '\\'" in query
     assert params[0] == ["paws_chicago", "wright_way"]
+    assert params[1] == 8.0
     assert "AND (%s = '' OR source = %s)" in query
     assert "COALESCE(name, '') ILIKE %s ESCAPE '\\'" in query
     assert params[2] == ""
@@ -128,6 +129,7 @@ def test_count_puppies_queries_multiple_sources(monkeypatch):
     assert "COALESCE(species, '') = %s" in query
     assert "COALESCE(breed, '') ILIKE %s ESCAPE '\\'" in query
     assert params[0] == ["paws_chicago", "wright_way"]
+    assert params[3] == 8.0
     assert "AND (%s = '' OR pet_status.source = %s)" in query
     assert "COALESCE(name, '') ILIKE %s ESCAPE '\\'" in query
     assert params[1] == ""
@@ -140,12 +142,12 @@ def test_render_page_has_uniform_card_structure_for_paws(monkeypatch):
     monkeypatch.setattr(
         pupswipe,
         "_count_puppies",
-        lambda breed_filter="", name_filter="", provider_filter="", species_filter="": 1,
+        lambda **_kwargs: 1,
     )
     monkeypatch.setattr(
         pupswipe,
         "_fetch_puppies",
-        lambda limit, offset=0, breed_filter="", name_filter="", provider_filter="", species_filter="": [
+        lambda limit, **_kwargs: [
             {
                 "dog_id": 1,
                 "url": "https://www.pawschicago.org/pet-available-for-adoption/showdog/123",
@@ -175,12 +177,12 @@ def test_render_page_has_uniform_card_structure_for_wright_way(monkeypatch):
     monkeypatch.setattr(
         pupswipe,
         "_count_puppies",
-        lambda breed_filter="", name_filter="", provider_filter="", species_filter="": 1,
+        lambda **_kwargs: 1,
     )
     monkeypatch.setattr(
         pupswipe,
         "_fetch_puppies",
-        lambda limit, offset=0, breed_filter="", name_filter="", provider_filter="", species_filter="": [
+        lambda limit, **_kwargs: [
             {
                 "dog_id": 2,
                 "url": "http://ws.petango.com/webservices/adoptablesearch/wsAdoptableAnimalDetails.aspx?id=60044823",
@@ -210,12 +212,12 @@ def test_render_page_swipe_forms_include_cat_species(monkeypatch):
     monkeypatch.setattr(
         pupswipe,
         "_count_puppies",
-        lambda breed_filter="", name_filter="", provider_filter="", species_filter="": 1,
+        lambda **_kwargs: 1,
     )
     monkeypatch.setattr(
         pupswipe,
         "_fetch_puppies",
-        lambda limit, offset=0, breed_filter="", name_filter="", provider_filter="", species_filter="": [
+        lambda limit, **_kwargs: [
             {
                 "dog_id": 22,
                 "species": "cat",
@@ -241,12 +243,12 @@ def test_render_page_shows_random_button(monkeypatch):
     monkeypatch.setattr(
         pupswipe,
         "_count_puppies",
-        lambda breed_filter="", name_filter="", provider_filter="", species_filter="": 1,
+        lambda **_kwargs: 1,
     )
     monkeypatch.setattr(
         pupswipe,
         "_fetch_puppies",
-        lambda limit, offset=0, breed_filter="", name_filter="", provider_filter="", species_filter="": [
+        lambda limit, **_kwargs: [
             {
                 "dog_id": 3,
                 "url": "https://example.com/dog/3",
@@ -264,65 +266,81 @@ def test_render_page_shows_random_button(monkeypatch):
     )
 
     html = pupswipe._render_page(
-        offset=0,
         breed_filter="Labrador",
         name_filter="Nova",
         provider_filter="wright_way",
         species_filter="cat",
+        max_age_months=6.5,
     ).decode("utf-8")
     assert ">Random</button>" in html
     assert 'name="random" value="1"' in html
-    assert 'name="breed" value="Labrador"' in html
-    assert 'name="name" value="Nova"' in html
-    assert 'name="provider" value="wright_way"' in html
-    assert 'name="species" value="cat"' in html
     assert 'id="breed-filter"' in html
     assert 'id="name-filter"' in html
     assert 'id="species-filter"' in html
     assert 'id="provider-filter"' in html
+    assert 'name="f"' in html
+    assert 'id="max-age-filter"' in html
+    assert 'name="max_age"' in html
+    assert 'value="6.5"' in html
+    assert 'name="offset"' not in html
+    assert 'id="auto-filter-form"' in html
+    assert 'data-auto-filter="1"' in html
     assert 'option value="cat" selected' in html
     assert 'option value="wright_way" selected' in html
+    assert ">Filter</button>" not in html
 
 
 def test_render_page_empty_state_matches_species_filter(monkeypatch):
     monkeypatch.setattr(
         pupswipe,
         "_count_puppies",
-        lambda breed_filter="", name_filter="", provider_filter="", species_filter="": 0,
+        lambda **_kwargs: 0,
     )
     monkeypatch.setattr(
         pupswipe,
         "_fetch_puppies",
-        lambda limit, offset=0, breed_filter="", name_filter="", provider_filter="", species_filter="": [],
+        lambda limit, **_kwargs: [],
     )
 
-    html = pupswipe._render_page(species_filter="cat").decode("utf-8")
+    html = pupswipe._render_page(species_filter="cat", max_age_months=6).decode("utf-8")
     assert "No cats match those filters. Try different filters." in html
 
 
-def test_render_page_randomize_uses_random_offset(monkeypatch):
+def test_render_page_randomize_fetches_unseen_with_random_order(monkeypatch):
     monkeypatch.setattr(
         pupswipe,
         "_count_puppies",
-        lambda breed_filter="", name_filter="", provider_filter="", species_filter="": 5,
+        lambda **_kwargs: 5,
     )
-    monkeypatch.setattr(pupswipe.random, "randrange", lambda n: 1)
+    monkeypatch.setattr(
+        pupswipe,
+        "_count_unseen_puppies",
+        lambda **_kwargs: 4,
+    )
 
     captured = {}
 
     def fake_fetch(
         limit,
-        offset=0,
         breed_filter="",
         name_filter="",
         provider_filter="",
         species_filter="",
+        max_age_months=8.0,
+        viewer_user_id=None,
+        viewer_user_key=None,
+        randomize=False,
+        review_passed=False,
     ):
-        captured["offset"] = offset
         captured["breed_filter"] = breed_filter
         captured["name_filter"] = name_filter
         captured["provider_filter"] = provider_filter
         captured["species_filter"] = species_filter
+        captured["max_age_months"] = max_age_months
+        captured["viewer_user_id"] = viewer_user_id
+        captured["viewer_user_key"] = viewer_user_key
+        captured["randomize"] = randomize
+        captured["review_passed"] = review_passed
         return [
             {
                 "dog_id": 4,
@@ -341,20 +359,162 @@ def test_render_page_randomize_uses_random_offset(monkeypatch):
 
     monkeypatch.setattr(pupswipe, "_fetch_puppies", fake_fetch)
     pupswipe._render_page(
-        offset=1,
         randomize=True,
         breed_filter="lab",
         name_filter="nova",
         provider_filter="paws_chicago",
         species_filter="cat",
+        max_age_months=4.5,
     )
 
-    # random.randrange(total - 1) -> 1, then offset shifts to avoid current offset 1.
-    assert captured["offset"] == 2
     assert captured["breed_filter"] == "lab"
     assert captured["name_filter"] == "nova"
     assert captured["provider_filter"] == "paws_chicago"
     assert captured["species_filter"] == "cat"
+    assert captured["max_age_months"] == 4.5
+    assert captured["randomize"] is True
+    assert captured["review_passed"] is False
+
+
+def test_render_page_start_over_switches_to_passed_review_mode(monkeypatch):
+    monkeypatch.setattr(
+        pupswipe,
+        "_count_puppies",
+        lambda **_kwargs: 2,
+    )
+    monkeypatch.setattr(
+        pupswipe,
+        "_count_unseen_puppies",
+        lambda **_kwargs: 0,
+    )
+    monkeypatch.setattr(
+        pupswipe,
+        "_fetch_puppies",
+        lambda limit, **_kwargs: [],
+    )
+
+    html = pupswipe._render_page().decode("utf-8")
+    assert ">Start over</button>" in html
+    assert 'name="review" value="passed"' in html
+
+
+def test_render_page_review_passed_fetches_passed_profiles(monkeypatch):
+    monkeypatch.setattr(
+        pupswipe,
+        "_count_puppies",
+        lambda **_kwargs: 3,
+    )
+    monkeypatch.setattr(
+        pupswipe,
+        "_count_passed_puppies",
+        lambda **_kwargs: 1,
+    )
+    captured = {}
+
+    def fake_fetch(limit, review_passed=False, **_kwargs):
+        captured["review_passed"] = review_passed
+        return [
+            {
+                "dog_id": 88,
+                "species": "dog",
+                "url": "https://example.com/dog/88",
+                "name": "River",
+                "breed": "Mix",
+                "gender": "Female",
+                "age_raw": "7 months",
+                "location": "Chicago, IL",
+                "status": "Available",
+                "description": "Ready again.",
+                "media": {"images": ["https://example.com/dog88.jpg"]},
+                "source": "paws_chicago",
+            }
+        ]
+
+    monkeypatch.setattr(pupswipe, "_fetch_puppies", fake_fetch)
+    html = pupswipe._render_page(review_passed=True).decode("utf-8")
+    assert captured["review_passed"] is True
+    assert "<h2>River</h2>" in html
+
+
+def test_render_page_shows_completion_celebration(monkeypatch):
+    monkeypatch.setattr(
+        pupswipe,
+        "_count_puppies",
+        lambda **_kwargs: 2,
+    )
+    monkeypatch.setattr(
+        pupswipe,
+        "_count_unseen_puppies",
+        lambda **_kwargs: 0,
+    )
+    called = {"fetch": False}
+
+    def fake_fetch(limit, **_kwargs):
+        called["fetch"] = True
+        return [
+            {
+                "dog_id": 9,
+                "species": "cat",
+                "url": "https://example.com/cat/9",
+                "name": "Luna",
+                "breed": "Mix",
+                "gender": "Female",
+                "age_raw": "5 months",
+                "location": "Chicago, IL",
+                "status": "Available",
+                "description": "Friendly.",
+                "media": {"images": ["https://example.com/cat9.jpg"]},
+                "source": "paws_chicago",
+            }
+        ]
+
+    monkeypatch.setattr(
+        pupswipe,
+        "_fetch_puppies",
+        fake_fetch,
+    )
+
+    html = pupswipe._render_page(species_filter="cat").decode("utf-8")
+    assert "All pets reviewed" in html
+    assert "swiped through all cats in this filter." in html
+    assert "celebrate-burst" in html
+    assert ">Start over</button>" in html
+    assert called["fetch"] is False
+
+
+def test_render_page_stats_show_remaining_unseen_not_offset(monkeypatch):
+    monkeypatch.setattr(
+        pupswipe,
+        "_count_puppies",
+        lambda **_kwargs: 10,
+    )
+    monkeypatch.setattr(
+        pupswipe,
+        "_count_unseen_puppies",
+        lambda **_kwargs: 3,
+    )
+    monkeypatch.setattr(
+        pupswipe,
+        "_fetch_puppies",
+        lambda limit, **_kwargs: [
+            {
+                "dog_id": 55,
+                "url": "https://example.com/dog/55",
+                "name": "Scout",
+                "breed": "Mix",
+                "gender": "Male",
+                "age_raw": "6 months",
+                "location": "Chicago, IL",
+                "status": "Available",
+                "description": "Friendly pup.",
+                "media": {"images": ["https://example.com/scout.jpg"]},
+                "source": "paws_chicago",
+            }
+        ],
+    )
+
+    html = pupswipe._render_page().decode("utf-8")
+    assert "3 left of 10" in html
 
 
 def test_normalize_next_path_allows_only_local_paths():
@@ -376,12 +536,12 @@ def test_render_page_shows_auth_links_by_signin_state(monkeypatch):
     monkeypatch.setattr(
         pupswipe,
         "_count_puppies",
-        lambda breed_filter="", name_filter="", provider_filter="", species_filter="": 1,
+        lambda **_kwargs: 1,
     )
     monkeypatch.setattr(
         pupswipe,
         "_fetch_puppies",
-        lambda limit, offset=0, breed_filter="", name_filter="", provider_filter="", species_filter="": [
+        lambda limit, **_kwargs: [
             {
                 "dog_id": 99,
                 "url": "https://example.com/dog/99",

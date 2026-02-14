@@ -23,7 +23,12 @@ except ImportError:  # Allows running as a script
 logger = logging.getLogger(__name__)
 
 SOURCE = "wright_way"
-START_URL = "https://wright-wayrescue.org/adoptable-pets"
+START_URLS = (
+    "https://wright-wayrescue.org/adoptable-pets",
+    "https://wright-wayrescue.org/adoptable-kittens",
+)
+# Backward-compatible constant for older references.
+START_URL = START_URLS[0]
 CACHE_TIME = 24 * 60 * 60  # 24 hours
 
 PROFILE_PATH_RE = re.compile(r"wsAdoptableAnimalDetails\.aspx", re.IGNORECASE)
@@ -326,23 +331,39 @@ def _extract_media(soup: BeautifulSoup, page_url: str) -> PetMedia:
 
 
 def _fetch_live_links() -> set[str]:
-    """Fetch current Wright-Way profile links from the adoptables page.
+    """Fetch current Wright-Way profile links from listing pages.
 
     Returns:
         Set of Petango profile URLs.
     """
-    soup = _get_soup(START_URL)
-    iframe = soup.find("iframe")
-    if not iframe or not iframe.get("src"):
-        raise RuntimeError("Petango iframe not found on Wright-Way adoptables page.")
+    links: set[str] = set()
+    iframe_missing_pages: list[str] = []
+    for start_url in START_URLS:
+        soup = _get_soup(start_url)
+        iframe = soup.find("iframe")
+        if not iframe or not iframe.get("src"):
+            iframe_missing_pages.append(start_url)
+            continue
 
-    listing_url = urljoin(START_URL, iframe["src"])
-    listing_soup = _get_soup(listing_url)
-    links = {
-        urljoin(listing_url, anchor["href"])
-        for anchor in listing_soup.select("a[href]")
-        if PROFILE_PATH_RE.search(anchor["href"])
-    }
+        listing_url = urljoin(start_url, iframe["src"])
+        listing_soup = _get_soup(listing_url)
+        links.update(
+            {
+                urljoin(listing_url, anchor["href"])
+                for anchor in listing_soup.select("a[href]")
+                if PROFILE_PATH_RE.search(anchor["href"])
+            }
+        )
+
+    if iframe_missing_pages:
+        message = (
+            "Petango iframe not found on Wright-Way pages: "
+            + ", ".join(iframe_missing_pages)
+        )
+        if links:
+            logger.warning(message)
+        else:
+            raise RuntimeError(message)
     return set(sorted(links))
 
 

@@ -120,3 +120,61 @@ def test_fetch_pet_profile_wrightway_parses_cat_species(monkeypatch):
 
     profile = wrightway.fetch_pet_profile_wrightway(PROFILE_URL + "&test=cat")
     assert profile.species == "cat"
+
+
+def test_fetch_live_links_collects_from_pets_and_kittens(monkeypatch):
+    pets_page = wrightway.START_URLS[0]
+    kittens_page = wrightway.START_URLS[1]
+    pets_listing = "https://ws.petango.com/webservices/adoptablesearch/wsAdoptableAnimals.aspx?species=Dog"
+    kittens_listing = "https://ws.petango.com/webservices/adoptablesearch/wsAdoptableAnimals.aspx?species=Cat"
+
+    pages = {
+        pets_page: f'<html><body><iframe src="{pets_listing}"></iframe></body></html>',
+        kittens_page: f'<html><body><iframe src="{kittens_listing}"></iframe></body></html>',
+        pets_listing: """
+            <a href="https://ws.petango.com/webservices/adoptablesearch/wsAdoptableAnimalDetails.aspx?id=101"></a>
+            <a href="https://ws.petango.com/webservices/adoptablesearch/wsAdoptableAnimalDetails.aspx?id=202"></a>
+        """,
+        kittens_listing: """
+            <a href="https://ws.petango.com/webservices/adoptablesearch/wsAdoptableAnimalDetails.aspx?id=202"></a>
+            <a href="https://ws.petango.com/webservices/adoptablesearch/wsAdoptableAnimalDetails.aspx?id=303"></a>
+        """,
+    }
+
+    def fake_get_soup(url: str) -> BeautifulSoup:
+        assert url in pages, f"Unexpected URL in test: {url}"
+        return BeautifulSoup(pages[url], "html.parser")
+
+    monkeypatch.setattr(wrightway, "_get_soup", fake_get_soup)
+
+    links = wrightway._fetch_live_links()
+    assert links == {
+        "https://ws.petango.com/webservices/adoptablesearch/wsAdoptableAnimalDetails.aspx?id=101",
+        "https://ws.petango.com/webservices/adoptablesearch/wsAdoptableAnimalDetails.aspx?id=202",
+        "https://ws.petango.com/webservices/adoptablesearch/wsAdoptableAnimalDetails.aspx?id=303",
+    }
+
+
+def test_fetch_live_links_uses_available_page_if_other_iframe_missing(monkeypatch):
+    pets_page = wrightway.START_URLS[0]
+    kittens_page = wrightway.START_URLS[1]
+    pets_listing = "https://ws.petango.com/webservices/adoptablesearch/wsAdoptableAnimals.aspx?species=Dog"
+
+    pages = {
+        pets_page: f'<html><body><iframe src="{pets_listing}"></iframe></body></html>',
+        kittens_page: "<html><body><p>No iframe here.</p></body></html>",
+        pets_listing: """
+            <a href="https://ws.petango.com/webservices/adoptablesearch/wsAdoptableAnimalDetails.aspx?id=404"></a>
+        """,
+    }
+
+    def fake_get_soup(url: str) -> BeautifulSoup:
+        assert url in pages, f"Unexpected URL in test: {url}"
+        return BeautifulSoup(pages[url], "html.parser")
+
+    monkeypatch.setattr(wrightway, "_get_soup", fake_get_soup)
+
+    links = wrightway._fetch_live_links()
+    assert links == {
+        "https://ws.petango.com/webservices/adoptablesearch/wsAdoptableAnimalDetails.aspx?id=404"
+    }

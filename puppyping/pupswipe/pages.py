@@ -1,8 +1,6 @@
 """HTML rendering helpers for PupSwipe."""
 
 from __future__ import annotations
-
-import random
 from html import escape
 from urllib.parse import urlencode
 
@@ -72,7 +70,6 @@ def _filtered_species_label(species_filter: str) -> str:
 
 
 def _render_page(
-    offset: int = 0,
     message: str | None = None,
     photo_index: int = 0,
     randomize: bool = False,
@@ -80,12 +77,15 @@ def _render_page(
     name_filter: str = "",
     provider_filter: str = "",
     species_filter: str = "",
+    max_age_months: float = 8.0,
     signed_in_email: str | None = None,
+    viewer_user_id: int | None = None,
+    viewer_user_key: str | None = None,
+    review_passed: bool = False,
 ) -> bytes:
     """Render the main HTML page.
 
     Args:
-        offset: Current dog index offset.
         message: Optional info/error message to display.
         photo_index: Selected image index within the current dog carousel.
         randomize: Whether to pick a random dog from the current result set.
@@ -93,7 +93,11 @@ def _render_page(
         name_filter: Optional name filter text.
         provider_filter: Optional provider source filter text.
         species_filter: Optional species filter text.
+        max_age_months: Maximum age in months to include.
         signed_in_email: Optional signed-in email for account actions.
+        viewer_user_id: Optional signed-in user id for unseen tracking.
+        viewer_user_key: Optional anonymous viewer key for unseen tracking.
+        review_passed: Whether to review previously passed pets.
 
     Returns:
         UTF-8 encoded HTML document bytes.
@@ -102,13 +106,17 @@ def _render_page(
     normalized_name = _normalize_name_filter(name_filter)
     normalized_provider = _normalize_provider_filter(provider_filter)
     normalized_species = _normalize_species_filter(species_filter)
+    normalized_max_age_months = _normalize_max_age_filter(max_age_months)
     escaped_breed = escape(normalized_breed)
     escaped_name = escape(normalized_name)
+    escaped_max_age = escape(f"{normalized_max_age_months:g}")
     filter_hidden_inputs = _filter_hidden_inputs(
         breed_filter=normalized_breed,
         name_filter=normalized_name,
         provider_filter=normalized_provider,
         species_filter=normalized_species,
+        max_age_months=normalized_max_age_months,
+        review_mode="passed" if review_passed else "",
     )
     escaped_signed_in_email = escape(signed_in_email) if signed_in_email else ""
     if signed_in_email:
@@ -130,6 +138,15 @@ def _render_page(
             "Sign in to save likes"
             "</a>"
         )
+    onboarding_intro_html = """
+      <section class="hero" aria-label="How PupSwipe works">
+        <p class="hero-kicker">How It Works</p>
+        <h2>Swipe right to like, left to pass.</h2>
+        <p class="hero-copy">
+          Create a profile with email and password to keep your liked pets in one place.
+        </p>
+      </section>
+    """
 
     try:
         total = _count_puppies(
@@ -137,24 +154,50 @@ def _render_page(
             name_filter=normalized_name,
             provider_filter=normalized_provider,
             species_filter=normalized_species,
+            max_age_months=normalized_max_age_months,
         )
-        if total > 0 and offset >= total:
-            offset = 0
-        if total > 1 and randomize:
-            current_offset = offset
-            random_offset = random.randrange(total - 1)
-            if random_offset >= current_offset:
-                random_offset += 1
-            offset = random_offset
-        elif total == 1 and randomize:
-            offset = 0
-        puppies = _fetch_puppies(
-            PAGE_SIZE,
-            offset=offset,
-            breed_filter=normalized_breed,
-            name_filter=normalized_name,
-            provider_filter=normalized_provider,
-            species_filter=normalized_species,
+        if review_passed:
+            count_passed_fn = globals().get("_count_passed_puppies")
+            remaining = (
+                count_passed_fn(
+                    breed_filter=normalized_breed,
+                    name_filter=normalized_name,
+                    provider_filter=normalized_provider,
+                    species_filter=normalized_species,
+                    max_age_months=normalized_max_age_months,
+                    viewer_user_id=viewer_user_id,
+                    viewer_user_key=viewer_user_key,
+                )
+                if callable(count_passed_fn)
+                else 0
+            )
+        else:
+            count_unseen_fn = globals().get("_count_unseen_puppies", _count_puppies)
+            remaining = count_unseen_fn(
+                breed_filter=normalized_breed,
+                name_filter=normalized_name,
+                provider_filter=normalized_provider,
+                species_filter=normalized_species,
+                max_age_months=normalized_max_age_months,
+                viewer_user_id=viewer_user_id,
+                viewer_user_key=viewer_user_key,
+            )
+        completed_cycle = (not review_passed) and total > 0 and remaining <= 0
+        puppies = (
+            _fetch_puppies(
+                PAGE_SIZE,
+                breed_filter=normalized_breed,
+                name_filter=normalized_name,
+                provider_filter=normalized_provider,
+                species_filter=normalized_species,
+                max_age_months=normalized_max_age_months,
+                viewer_user_id=viewer_user_id,
+                viewer_user_key=viewer_user_key,
+                randomize=randomize,
+                review_passed=review_passed,
+            )
+            if remaining > 0
+            else []
         )
     except Exception as exc:
         error_html = f"""<!doctype html>
@@ -177,6 +220,7 @@ def _render_page(
         </div>
         {account_actions_html}
       </header>
+      {onboarding_intro_html}
       <main>
         <section class="stack">
           <div class="state state-error">Failed to load puppies: {escape(str(exc))}</div>
@@ -187,7 +231,14 @@ def _render_page(
 </html>"""
         return error_html.encode("utf-8")
 
-    stats = f"{max(total - offset, 0)} left of {total}" if total else "No puppies found"
+    if total:
+        stats = (
+            f"{max(remaining, 0)} passed left of {total}"
+            if review_passed
+            else f"{max(remaining, 0)} left of {total}"
+        )
+    else:
+        stats = "No puppies found"
     active_filters: list[str] = []
     if normalized_breed:
         active_filters.append(f"Breed: {normalized_breed}")
@@ -197,12 +248,17 @@ def _render_page(
         active_filters.append(f"Provider: {_provider_name(normalized_provider)}")
     if normalized_species:
         active_filters.append(f"Species: {normalized_species.title()}")
+    if normalized_max_age_months != MAX_PUPPY_AGE_MONTHS:
+        active_filters.append(f"Max age: {normalized_max_age_months:g} months")
     if active_filters:
         stats = f"{stats} | Filters: {', '.join(active_filters)}"
 
     clear_filter_html = ""
     if active_filters:
-        clear_query = urlencode({"offset": "0"})
+        clear_params = {"clear_filters": "1"}
+        if review_passed:
+            clear_params["review"] = "passed"
+        clear_query = urlencode(clear_params)
         clear_filter_html = f'<a class="clear-filter" href="/?{clear_query}">Clear</a>'
 
     provider_options = ['<option value="">All providers</option>']
@@ -223,11 +279,20 @@ def _render_page(
         )
         for value in species_option_values
     )
+    review_mode_hidden_input = (
+        '<input type="hidden" name="review" value="passed" />' if review_passed else ""
+    )
 
     filter_bar = f"""
       <section class="filter-strip" aria-label="Pup filters">
-        <form class="breed-filter-form" method="get" action="/">
-          <input type="hidden" name="offset" value="0" />
+        <form
+          id="auto-filter-form"
+          class="breed-filter-form"
+          method="get"
+          action="/"
+          data-auto-filter="1"
+        >
+          {review_mode_hidden_input}
           <div class="filter-field">
             <label for="breed-filter">Breed</label>
             <input
@@ -237,6 +302,7 @@ def _render_page(
               value="{escaped_breed}"
               placeholder="e.g. Labrador"
               maxlength="{MAX_BREED_FILTER_LENGTH}"
+              onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()"
             />
           </div>
           <div class="filter-field">
@@ -248,25 +314,114 @@ def _render_page(
               value="{escaped_name}"
               placeholder="e.g. Nova"
               maxlength="{MAX_NAME_FILTER_LENGTH}"
+              onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()"
             />
           </div>
           <div class="filter-field">
             <label for="species-filter">Species</label>
-            <select id="species-filter" name="species">
+            <select
+              id="species-filter"
+              name="species"
+              onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()"
+            >
               {species_options_html}
             </select>
           </div>
           <div class="filter-field">
             <label for="provider-filter">Provider</label>
-            <select id="provider-filter" name="provider">
+            <select
+              id="provider-filter"
+              name="provider"
+              onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()"
+            >
               {provider_options_html}
             </select>
           </div>
-          <button class="btn filter" type="submit">Filter</button>
+          <div class="filter-field">
+            <label for="max-age-filter">Max age (months)</label>
+            <input
+              id="max-age-filter"
+              name="max_age"
+              type="number"
+              min="0.5"
+              max="120"
+              step="0.5"
+              value="{escaped_max_age}"
+              inputmode="decimal"
+              onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()"
+            />
+          </div>
           {clear_filter_html}
         </form>
       </section>
     """
+
+    if completed_cycle and total > 0:
+        filtered_species_label = _filtered_species_label(normalized_species)
+        completion_copy = (
+            message
+            or f"You've swiped through all {filtered_species_label} in this filter."
+        )
+        celebration_html = f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PupSwipe | PuppyPing</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="background">
+      <div class="glow glow-a"></div>
+      <div class="glow glow-b"></div>
+      <div class="grid"></div>
+    </div>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">PS</div>
+          <div>
+            <h1>PupSwipe</h1>
+            <p>By PuppyPing</p>
+          </div>
+        </div>
+        <div class="stats">{escape(stats)}</div>
+        {account_actions_html}
+      </header>
+      {onboarding_intro_html}
+      <main>
+        <section class="stack">
+          <div class="state state-complete">
+            <div class="celebrate-burst" aria-hidden="true">
+              <span class="burst-dot dot-a"></span>
+              <span class="burst-dot dot-b"></span>
+              <span class="burst-dot dot-c"></span>
+              <span class="burst-dot dot-d"></span>
+              <span class="burst-dot dot-e"></span>
+              <span class="burst-dot dot-f"></span>
+            </div>
+            <h2 class="complete-title">All pets reviewed</h2>
+            <p class="complete-copy">{escape(completion_copy)}</p>
+          </div>
+        </section>
+        <section class="controls">
+          <form method="get" action="/">
+            <input type="hidden" name="review" value="passed" />
+            {filter_hidden_inputs}
+            <button class="btn like" type="submit">Start over</button>
+          </form>
+          <form method="get" action="/">
+            <input type="hidden" name="random" value="1" />
+            {filter_hidden_inputs}
+            <button class="btn refresh" type="submit">Random</button>
+          </form>
+        </section>
+        {filter_bar}
+      </main>
+    </div>
+  </body>
+</html>"""
+        return celebration_html.encode("utf-8")
 
     if not puppies:
         filtered_species_label = _filtered_species_label(normalized_species)
@@ -278,6 +433,8 @@ def _render_page(
                 else "No puppies to show yet. Run scraper and refresh."
             )
         )
+        if review_passed and not message:
+            empty_msg = "No previously passed pets are still available in this filter."
         no_data = f"""<!doctype html>
 <html lang="en">
   <head>
@@ -299,13 +456,13 @@ def _render_page(
         <div class="stats">{escape(stats)}</div>
         {account_actions_html}
       </header>
+      {onboarding_intro_html}
       <main>
         <section class="stack">
           <div class="state state-empty">{escape(empty_msg)}</div>
         </section>
         <section class="controls">
           <form method="get" action="/">
-            <input type="hidden" name="offset" value="{offset}" />
             <input type="hidden" name="random" value="1" />
             {filter_hidden_inputs}
             <button class="btn refresh" type="submit">Random</button>
@@ -321,7 +478,6 @@ def _render_page(
             {escape(PROVIDER_DISCLAIMER)}
           </p>
           <form class="subscribe-form" method="post" action="/subscribe">
-            <input type="hidden" name="offset" value="{offset}" />
             <input type="hidden" name="photo" value="0" />
             {filter_hidden_inputs}
             <label class="subscribe-label" for="subscribe-email-empty">Email for PuppyPing alerts</label>
@@ -387,8 +543,9 @@ def _render_page(
         image_block = f'<div class="photo-fallback">{escape(initials)}</div>'
     current_photo_index = photo_index % photo_count if photo_count > 0 else 0
 
+    has_carousel = photo_count > 1
     carousel_controls = ""
-    if photo_count > 1:
+    if has_carousel:
         prev_photo = (photo_index - 1) % photo_count
         next_photo = (photo_index + 1) % photo_count
         current_index = photo_index % photo_count
@@ -399,7 +556,6 @@ def _render_page(
         carousel_controls = f"""
             <div class="carousel-controls" aria-label="Photo carousel controls">
               <form method="get" action="/">
-                <input type="hidden" name="offset" value="{offset}" />
                 <input type="hidden" name="photo" value="{prev_photo}" />
                 {filter_hidden_inputs}
                 <button class="carousel-btn" type="submit" aria-label="Previous photo">Prev</button>
@@ -409,13 +565,13 @@ def _render_page(
                 <div class="carousel-dots" aria-hidden="true">{dots}</div>
               </div>
               <form method="get" action="/">
-                <input type="hidden" name="offset" value="{offset}" />
                 <input type="hidden" name="photo" value="{next_photo}" />
                 {filter_hidden_inputs}
                 <button class="carousel-btn" type="submit" aria-label="Next photo">Next</button>
               </form>
             </div>
         """
+    photo_container_class = "card-photo has-carousel" if has_carousel else "card-photo"
 
     info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
     page_html = f"""<!doctype html>
@@ -444,20 +600,22 @@ def _render_page(
         </div>
         <div class="topbar-meta">
           <div class="stats">{escape(stats)}</div>
-          <a class="profile-link top-profile-link" href="{profile_url}" target="_blank" rel="noopener">Open profile</a>
+          <a class="profile-link top-profile-link" href="{profile_url}" target="_blank" rel="noopener">Pet details</a>
         </div>
         {account_actions_html}
       </header>
+      {onboarding_intro_html}
 
       {info_msg}
 
       <main>
         <section class="stack">
           <article id="swipe-card" class="card enter" data-swipe-threshold="110">
-            <div class="card-photo">
+            <div class="{photo_container_class}">
               {image_block}
+              {carousel_controls}
               <div class="swipe-indicator like">Like</div>
-              <div class="swipe-indicator nope">Nope</div>
+              <div class="swipe-indicator nope">Pass</div>
             </div>
             <div class="card-body">
               <div class="card-title">
@@ -473,7 +631,6 @@ def _render_page(
                 <span class="badge">{status}</span>
                 <span class="badge badge-provider">{provider_name}</span>
               </div>
-              {carousel_controls}
               <div class="description-wrap">
                 <h3 class="description-label">Description</h3>
                 <p class="description">{description}</p>
@@ -490,13 +647,11 @@ def _render_page(
           <form id="swipe-nope-form" method="post" action="/swipe">
             <input type="hidden" name="dog_id" value="{dog_id}" />
             <input type="hidden" name="species" value="{species}" />
-            <input type="hidden" name="offset" value="{offset}" />
             {filter_hidden_inputs}
             <input type="hidden" name="swipe" value="left" />
-            <button class="btn nope" type="submit">Nope</button>
+            <button class="btn nope" type="submit">Pass</button>
           </form>
           <form method="get" action="/">
-            <input type="hidden" name="offset" value="{offset}" />
             <input type="hidden" name="random" value="1" />
             {filter_hidden_inputs}
             <button class="btn refresh" type="submit">Random</button>
@@ -504,7 +659,6 @@ def _render_page(
           <form id="swipe-like-form" method="post" action="/swipe">
             <input type="hidden" name="dog_id" value="{dog_id}" />
             <input type="hidden" name="species" value="{species}" />
-            <input type="hidden" name="offset" value="{offset}" />
             {filter_hidden_inputs}
             <input type="hidden" name="swipe" value="right" />
             <button class="btn like" type="submit">Like</button>
@@ -523,7 +677,6 @@ def _render_page(
           {escape(PROVIDER_DISCLAIMER)}
         </p>
         <form class="subscribe-form" method="post" action="/subscribe">
-          <input type="hidden" name="offset" value="{offset}" />
           <input type="hidden" name="photo" value="{current_photo_index}" />
           {filter_hidden_inputs}
           <label class="subscribe-label" for="subscribe-email">Email for PuppyPing alerts</label>
@@ -960,5 +1113,6 @@ def _render_likes_page(
   </body>
 </html>"""
     return page_html.encode("utf-8")
+
 
 

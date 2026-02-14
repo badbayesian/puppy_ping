@@ -194,3 +194,37 @@ def test_run_sends_cat_profiles(monkeypatch):
     assert recipient == "to@example.com"
     assert profiles
     assert all(p.species == "cat" for p in profiles)
+
+
+def test_run_logs_remaining_animals_by_provider(monkeypatch):
+    profile = PetProfile(
+        dog_id=-4,
+        url="u",
+        age_months=5,
+        media=PetMedia(),
+    )
+
+    monkeypatch.setattr(
+        server,
+        "fetch_adoptable_pet_profile_links",
+        lambda source, store_in_db: {
+            f"https://example.com/{source}/a",
+            f"https://example.com/{source}/b",
+        },
+    )
+    monkeypatch.setattr(server, "fetch_pet_profile", lambda source, url: profile)
+    monkeypatch.setattr(server, "tqdm", lambda items, desc=None: items)
+    monkeypatch.setattr(server, "store_pet_status", lambda *args, **kwargs: None)
+    monkeypatch.setattr(server, "store_pet_profiles_in_db", lambda *args, **kwargs: None)
+
+    logger = DummyLogger()
+    server.logger = logger
+    server.run(send_ping=False, max_age=8.0, store_in_db=False)
+
+    messages = [str(msg) for msg in logger.messages]
+    assert any(
+        "[paws_chicago] processed=1 remaining=1" in msg for msg in messages
+    )
+    assert any(
+        "[wright_way] processed=1 remaining=1" in msg for msg in messages
+    )

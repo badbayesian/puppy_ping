@@ -7,7 +7,9 @@ recording swipe actions, and exposing health/data APIs backed by Postgres.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
+import hmac
 import json
 import os
 import random
@@ -29,6 +31,7 @@ from puppyping.pupswipe.auth import (
     password_error,
     password_reset_error,
     password_reset_token_hash,
+    session_secret,
     send_password_reset_email,
     verify_password,
 )
@@ -38,6 +41,7 @@ from puppyping.pupswipe.config import (
     MAX_BREED_FILTER_LENGTH,
     MAX_LIMIT,
     MAX_NAME_FILTER_LENGTH,
+    MAX_PUPPY_AGE_MONTHS,
     PAGE_SIZE,
     PASSWORD_MIN_LENGTH,
     PROVIDER_DISCLAIMER,
@@ -47,8 +51,10 @@ from puppyping.pupswipe.config import (
     provider_name,
 )
 from puppyping.pupswipe.repository import (
+    count_passed_puppies as repo_count_passed_puppies,
     consume_password_reset_token as repo_consume_password_reset_token,
     count_puppies as repo_count_puppies,
+    count_unseen_puppies as repo_count_unseen_puppies,
     count_liked_puppies as repo_count_liked_puppies,
     create_password_reset_token as repo_create_password_reset_token,
     ensure_app_schema as repo_ensure_app_schema,
@@ -69,6 +75,9 @@ PUPSWIPE_SOURCES = _get_pupswipe_sources()
 _ensure_app_schema = repo_ensure_app_schema
 
 MAX_SPECIES_FILTER_LENGTH = 40
+MIN_MAX_AGE_MONTHS = 0.5
+MAX_MAX_AGE_MONTHS = 120.0
+FILTER_COOKIE_NAME = "pupswipe_filters"
 
 
 def _normalize_breed_filter(value: str | None) -> str:
@@ -105,30 +114,121 @@ def _normalize_species_filter(value: str | None) -> str:
     return text[:MAX_SPECIES_FILTER_LENGTH]
 
 
+def _normalize_max_age_filter(
+    value,
+    default: float = MAX_PUPPY_AGE_MONTHS,
+) -> float:
+    """Normalize age filter to a bounded positive month value."""
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = float(default)
+    return max(MIN_MAX_AGE_MONTHS, min(MAX_MAX_AGE_MONTHS, parsed))
+
+
+def _normalized_filter_payload(
+    breed_filter: str = "",
+    name_filter: str = "",
+    provider_filter: str = "",
+    species_filter: str = "",
+    max_age_months: float = MAX_PUPPY_AGE_MONTHS,
+) -> dict[str, str | float]:
+    """Build canonical normalized filter payload."""
+    return {
+        "breed": _normalize_breed_filter(breed_filter),
+        "name": _normalize_name_filter(name_filter),
+        "provider": _normalize_provider_filter(provider_filter),
+        "species": _normalize_species_filter(species_filter),
+        "max_age": _normalize_max_age_filter(max_age_months),
+    }
+
+
+def _has_active_filters(payload: dict[str, str | float]) -> bool:
+    """Return True when payload has at least one non-default filter value."""
+    return bool(
+        str(payload.get("breed") or "").strip()
+        or str(payload.get("name") or "").strip()
+        or str(payload.get("provider") or "").strip()
+        or str(payload.get("species") or "").strip()
+        or float(payload.get("max_age") or MAX_PUPPY_AGE_MONTHS) != MAX_PUPPY_AGE_MONTHS
+    )
+
+
+def _filter_hash(payload: dict[str, str | float]) -> str:
+    """Create short stable hash identifier for a filter payload."""
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def _encode_filter_cookie_value(payload: dict[str, str | float]) -> str:
+    """Encode signed cookie value containing normalized filter payload."""
+    canonical_json = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    encoded = base64.urlsafe_b64encode(canonical_json).decode("ascii").rstrip("=")
+    signature = hmac.new(
+        session_secret().encode("utf-8"),
+        encoded.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{encoded}.{signature}"
+
+
+def _decode_filter_cookie_value(raw_value: str | None) -> dict[str, str | float] | None:
+    """Decode and verify signed filter cookie payload."""
+    value = (raw_value or "").strip()
+    if "." not in value:
+        return None
+    encoded, signature = value.split(".", 1)
+    expected = hmac.new(
+        session_secret().encode("utf-8"),
+        encoded.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        return None
+    try:
+        padding = "=" * (-len(encoded) % 4)
+        decoded = base64.urlsafe_b64decode(encoded + padding).decode("utf-8")
+        parsed = json.loads(decoded)
+    except Exception:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return _normalized_filter_payload(
+        breed_filter=str(parsed.get("breed") or ""),
+        name_filter=str(parsed.get("name") or ""),
+        provider_filter=str(parsed.get("provider") or ""),
+        species_filter=str(parsed.get("species") or ""),
+        max_age_months=parsed.get("max_age", MAX_PUPPY_AGE_MONTHS),
+    )
+
+
 def _filter_hidden_inputs(
     breed_filter: str = "",
     name_filter: str = "",
     provider_filter: str = "",
     species_filter: str = "",
+    max_age_months: float = MAX_PUPPY_AGE_MONTHS,
+    filter_hash: str = "",
+    review_mode: str = "",
 ) -> str:
     """Render hidden form inputs for currently active filters."""
     hidden_inputs: list[str] = []
-    if breed_filter:
-        hidden_inputs.append(
-            f'<input type="hidden" name="breed" value="{escape(breed_filter)}" />'
-        )
-    if name_filter:
-        hidden_inputs.append(
-            f'<input type="hidden" name="name" value="{escape(name_filter)}" />'
-        )
-    if provider_filter:
-        hidden_inputs.append(
-            f'<input type="hidden" name="provider" value="{escape(provider_filter)}" />'
-        )
-    if species_filter:
-        hidden_inputs.append(
-            f'<input type="hidden" name="species" value="{escape(species_filter)}" />'
-        )
+    normalized_payload = _normalized_filter_payload(
+        breed_filter=breed_filter,
+        name_filter=name_filter,
+        provider_filter=provider_filter,
+        species_filter=species_filter,
+        max_age_months=max_age_months,
+    )
+    active_hash = (filter_hash or "").strip()
+    if not active_hash and _has_active_filters(normalized_payload):
+        active_hash = _filter_hash(normalized_payload)
+    if active_hash:
+        hidden_inputs.append(f'<input type="hidden" name="f" value="{escape(active_hash)}" />')
+    if (review_mode or "").strip().lower() == "passed":
+        hidden_inputs.append('<input type="hidden" name="review" value="passed" />')
     return "\n            ".join(hidden_inputs)
 
 
@@ -138,35 +238,54 @@ def _add_active_filters(
     name_filter: str = "",
     provider_filter: str = "",
     species_filter: str = "",
+    max_age_months: float = MAX_PUPPY_AGE_MONTHS,
+    filter_hash: str = "",
+    review_mode: str = "",
 ) -> dict[str, str]:
     """Attach non-empty filters to query params for redirects/links."""
-    if breed_filter:
-        query_params["breed"] = breed_filter
-    if name_filter:
-        query_params["name"] = name_filter
-    if provider_filter:
-        query_params["provider"] = provider_filter
-    if species_filter:
-        query_params["species"] = species_filter
+    active_hash = (filter_hash or "").strip()
+    if not active_hash:
+        normalized_payload = _normalized_filter_payload(
+            breed_filter=breed_filter,
+            name_filter=name_filter,
+            provider_filter=provider_filter,
+            species_filter=species_filter,
+            max_age_months=max_age_months,
+        )
+        if _has_active_filters(normalized_payload):
+            active_hash = _filter_hash(normalized_payload)
+    if active_hash:
+        query_params["f"] = active_hash
+    if (review_mode or "").strip().lower() == "passed":
+        query_params["review"] = "passed"
     return query_params
 
 
 def _fetch_puppies(
     limit: int,
-    offset: int = 0,
     breed_filter: str = "",
     name_filter: str = "",
     provider_filter: str = "",
     species_filter: str = "",
+    max_age_months: float = MAX_PUPPY_AGE_MONTHS,
+    *,
+    viewer_user_id: int | None = None,
+    viewer_user_key: str | None = None,
+    randomize: bool = False,
+    review_passed: bool = False,
 ) -> list[dict]:
     """Load the latest available dog profiles ordered by recency."""
     return repo_fetch_puppies(
         limit,
-        offset=offset,
         breed_filter=breed_filter,
         name_filter=name_filter,
         provider_filter=provider_filter,
         species_filter=species_filter,
+        max_age_months=max_age_months,
+        viewer_user_id=viewer_user_id,
+        viewer_user_key=viewer_user_key,
+        randomize=randomize,
+        review_passed=review_passed,
         sources=PUPSWIPE_SOURCES,
         connection_factory=get_connection,
         ensure_schema_fn=_ensure_app_schema,
@@ -178,6 +297,7 @@ def _count_puppies(
     name_filter: str = "",
     provider_filter: str = "",
     species_filter: str = "",
+    max_age_months: float = MAX_PUPPY_AGE_MONTHS,
 ) -> int:
     """Count latest dog profiles that are currently available."""
     return repo_count_puppies(
@@ -185,6 +305,65 @@ def _count_puppies(
         name_filter=name_filter,
         provider_filter=provider_filter,
         species_filter=species_filter,
+        max_age_months=max_age_months,
+        sources=PUPSWIPE_SOURCES,
+        connection_factory=get_connection,
+        ensure_schema_fn=_ensure_app_schema,
+    )
+
+
+def _count_unseen_puppies(
+    breed_filter: str = "",
+    name_filter: str = "",
+    provider_filter: str = "",
+    species_filter: str = "",
+    max_age_months: float = MAX_PUPPY_AGE_MONTHS,
+    *,
+    viewer_user_id: int | None = None,
+    viewer_user_key: str | None = None,
+) -> int:
+    """Count available profiles not yet swiped by this viewer context."""
+    if viewer_user_id is None and not (viewer_user_key or "").strip():
+        return _count_puppies(
+            breed_filter=breed_filter,
+            name_filter=name_filter,
+            provider_filter=provider_filter,
+            species_filter=species_filter,
+            max_age_months=max_age_months,
+        )
+    return repo_count_unseen_puppies(
+        breed_filter=breed_filter,
+        name_filter=name_filter,
+        provider_filter=provider_filter,
+        species_filter=species_filter,
+        max_age_months=max_age_months,
+        viewer_user_id=viewer_user_id,
+        viewer_user_key=viewer_user_key,
+        sources=PUPSWIPE_SOURCES,
+        connection_factory=get_connection,
+        ensure_schema_fn=_ensure_app_schema,
+    )
+
+
+def _count_passed_puppies(
+    breed_filter: str = "",
+    name_filter: str = "",
+    provider_filter: str = "",
+    species_filter: str = "",
+    max_age_months: float = MAX_PUPPY_AGE_MONTHS,
+    *,
+    viewer_user_id: int | None = None,
+    viewer_user_key: str | None = None,
+) -> int:
+    """Count available profiles whose latest swipe for this viewer was pass."""
+    return repo_count_passed_puppies(
+        breed_filter=breed_filter,
+        name_filter=name_filter,
+        provider_filter=provider_filter,
+        species_filter=species_filter,
+        max_age_months=max_age_months,
+        viewer_user_id=viewer_user_id,
+        viewer_user_key=viewer_user_key,
         sources=PUPSWIPE_SOURCES,
         connection_factory=get_connection,
         ensure_schema_fn=_ensure_app_schema,
@@ -374,14 +553,18 @@ def _sync_page_context() -> None:
     pages._normalize_name_filter = _normalize_name_filter
     pages._normalize_provider_filter = _normalize_provider_filter
     pages._normalize_species_filter = _normalize_species_filter
+    pages._normalize_max_age_filter = _normalize_max_age_filter
     pages._filter_hidden_inputs = _filter_hidden_inputs
     pages._count_puppies = _count_puppies
+    pages._count_unseen_puppies = _count_unseen_puppies
+    pages._count_passed_puppies = _count_passed_puppies
     pages._fetch_puppies = _fetch_puppies
     pages._provider_name = _provider_name
     pages._safe_int = _safe_int
     pages._normalize_next_path = _normalize_next_path
     pages.PUPSWIPE_SOURCES = PUPSWIPE_SOURCES
     pages.PAGE_SIZE = PAGE_SIZE
+    pages.MAX_PUPPY_AGE_MONTHS = MAX_PUPPY_AGE_MONTHS
     pages.MAX_BREED_FILTER_LENGTH = MAX_BREED_FILTER_LENGTH
     pages.MAX_NAME_FILTER_LENGTH = MAX_NAME_FILTER_LENGTH
     pages.PASSWORD_MIN_LENGTH = PASSWORD_MIN_LENGTH
@@ -397,7 +580,6 @@ def _get_photo_urls(pup: dict) -> list[str]:
 
 
 def _render_page(
-    offset: int = 0,
     message: str | None = None,
     photo_index: int = 0,
     randomize: bool = False,
@@ -405,11 +587,14 @@ def _render_page(
     name_filter: str = "",
     provider_filter: str = "",
     species_filter: str = "",
+    max_age_months: float = MAX_PUPPY_AGE_MONTHS,
     signed_in_email: str | None = None,
+    viewer_user_id: int | None = None,
+    viewer_user_key: str | None = None,
+    review_passed: bool = False,
 ) -> bytes:
     _sync_page_context()
     return pages._render_page(
-        offset=offset,
         message=message,
         photo_index=photo_index,
         randomize=randomize,
@@ -417,7 +602,11 @@ def _render_page(
         name_filter=name_filter,
         provider_filter=provider_filter,
         species_filter=species_filter,
+        max_age_months=max_age_months,
         signed_in_email=signed_in_email,
+        viewer_user_id=viewer_user_id,
+        viewer_user_key=viewer_user_key,
+        review_passed=review_passed,
     )
 
 
@@ -573,11 +762,33 @@ class AppHandler(SimpleHTTPRequestHandler):
             parts.append("Secure")
         return "; ".join(parts)
 
+    def _filter_cookie_header(self, payload: dict[str, str | float]) -> str:
+        """Build Set-Cookie header for persisted filter state."""
+        parts = [
+            f"{FILTER_COOKIE_NAME}={_encode_filter_cookie_value(payload)}",
+            "Path=/",
+            "HttpOnly",
+            "SameSite=Lax",
+            f"Max-Age={SESSION_COOKIE_MAX_AGE_SECONDS}",
+        ]
+        forwarded_proto = (self._first_header("X-Forwarded-Proto") or "").lower()
+        if forwarded_proto == "https":
+            parts.append("Secure")
+        return "; ".join(parts)
+
     @staticmethod
     def _clear_session_cookie_header() -> str:
         """Build Set-Cookie header value for clearing session cookie."""
         return (
             f"{SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; "
+            "Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+        )
+
+    @staticmethod
+    def _clear_filter_cookie_header() -> str:
+        """Build Set-Cookie header value for clearing filter cookie."""
+        return (
+            f"{FILTER_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; "
             "Expires=Thu, 01 Jan 1970 00:00:00 GMT"
         )
 
@@ -603,6 +814,13 @@ class AppHandler(SimpleHTTPRequestHandler):
             return _get_user_by_id(user_id)
         except Exception:
             return None
+
+    def _filter_state_from_cookie(self) -> dict[str, str | float]:
+        """Read normalized filter state from signed filter cookie."""
+        decoded = _decode_filter_cookie_value(self._cookie_value(FILTER_COOKIE_NAME))
+        if decoded:
+            return decoded
+        return _normalized_filter_payload()
 
     def _first_header(self, *names: str) -> str | None:
         """Return the first non-empty header value from a list of names.
@@ -725,6 +943,9 @@ class AppHandler(SimpleHTTPRequestHandler):
             name_filter = _normalize_name_filter(query.get("name", [""])[0])
             provider_filter = _normalize_provider_filter(query.get("provider", [""])[0])
             species_filter = _normalize_species_filter(query.get("species", [""])[0])
+            max_age_months = _normalize_max_age_filter(
+                query.get("max_age", [str(MAX_PUPPY_AGE_MONTHS)])[0]
+            )
             try:
                 puppies = _fetch_puppies(
                     limit,
@@ -732,6 +953,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                     name_filter=name_filter,
                     provider_filter=provider_filter,
                     species_filter=species_filter,
+                    max_age_months=max_age_months,
                 )
             except Exception as exc:
                 return self._send_json(
@@ -812,7 +1034,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 if user_id <= 0:
                     raise ValueError("invalid user id")
                 total_likes = _count_liked_puppies(user_id)
-                puppies = _fetch_liked_puppies(user_id=user_id, limit=120, offset=0)
+                puppies = _fetch_liked_puppies(user_id=user_id, limit=120)
             except Exception as exc:
                 body = _render_likes_page(
                     email=str(current_user.get("email") or ""),
@@ -849,12 +1071,12 @@ class AppHandler(SimpleHTTPRequestHandler):
 
         if parsed.path == "/" or parsed.path == "/index.html":
             query = parse_qs(parsed.query)
-            offset = _safe_int(query.get("offset", ["0"])[0], 0)
             photo_index = _safe_int(query.get("photo", ["0"])[0], 0)
-            breed_filter = _normalize_breed_filter(query.get("breed", [""])[0])
-            name_filter = _normalize_name_filter(query.get("name", [""])[0])
-            provider_filter = _normalize_provider_filter(query.get("provider", [""])[0])
-            species_filter = _normalize_species_filter(query.get("species", [""])[0])
+            review_mode = (
+                "passed"
+                if query.get("review", [""])[0].strip().lower() == "passed"
+                else ""
+            )
             randomize = query.get("random", ["0"])[0].strip().lower() in {
                 "1",
                 "true",
@@ -862,9 +1084,72 @@ class AppHandler(SimpleHTTPRequestHandler):
                 "on",
             }
             msg = query.get("msg", [None])[0]
+            clear_filters = query.get("clear_filters", ["0"])[0].strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+            raw_filters_present = any(
+                key in query for key in ("breed", "name", "provider", "species", "max_age")
+            )
+
+            if clear_filters:
+                location = "/?review=passed" if review_mode == "passed" else "/"
+                self.send_response(303)
+                self.send_header("Set-Cookie", self._clear_filter_cookie_header())
+                self.send_header("Location", location)
+                self.end_headers()
+                return
+
+            if raw_filters_present:
+                normalized_payload = _normalized_filter_payload(
+                    breed_filter=query.get("breed", [""])[0],
+                    name_filter=query.get("name", [""])[0],
+                    provider_filter=query.get("provider", [""])[0],
+                    species_filter=query.get("species", [""])[0],
+                    max_age_months=query.get("max_age", [str(MAX_PUPPY_AGE_MONTHS)])[0],
+                )
+                redirect_params: dict[str, str] = {}
+                if photo_index > 0:
+                    redirect_params["photo"] = str(photo_index)
+                if randomize:
+                    redirect_params["random"] = "1"
+                if msg:
+                    redirect_params["msg"] = msg
+                redirect_params = _add_active_filters(
+                    redirect_params,
+                    breed_filter=str(normalized_payload.get("breed") or ""),
+                    name_filter=str(normalized_payload.get("name") or ""),
+                    provider_filter=str(normalized_payload.get("provider") or ""),
+                    species_filter=str(normalized_payload.get("species") or ""),
+                    max_age_months=float(
+                        normalized_payload.get("max_age") or MAX_PUPPY_AGE_MONTHS
+                    ),
+                    review_mode=review_mode,
+                )
+                location = "/" if not redirect_params else f"/?{urlencode(redirect_params)}"
+                self.send_response(303)
+                self.send_header("Set-Cookie", self._filter_cookie_header(normalized_payload))
+                self.send_header("Location", location)
+                self.end_headers()
+                return
+
+            filter_state = self._filter_state_from_cookie()
+            breed_filter = str(filter_state.get("breed") or "")
+            name_filter = str(filter_state.get("name") or "")
+            provider_filter = str(filter_state.get("provider") or "")
+            species_filter = str(filter_state.get("species") or "")
+            max_age_months = float(filter_state.get("max_age") or MAX_PUPPY_AGE_MONTHS)
             current_user = self._signed_in_user()
+            current_user_id = _safe_int(str(current_user.get("id")), 0) if current_user else 0
+            viewer_context = self._user_context()
+            viewer_user_key = (
+                str(viewer_context.get("user_key") or "")
+                if current_user_id <= 0
+                else ""
+            )
             body = _render_page(
-                offset=offset,
                 message=msg,
                 photo_index=photo_index,
                 randomize=randomize,
@@ -872,9 +1157,13 @@ class AppHandler(SimpleHTTPRequestHandler):
                 name_filter=name_filter,
                 provider_filter=provider_filter,
                 species_filter=species_filter,
+                max_age_months=max_age_months,
                 signed_in_email=(
                     str(current_user.get("email") or "") if current_user else None
                 ),
+                viewer_user_id=current_user_id if current_user_id > 0 else None,
+                viewer_user_key=viewer_user_key,
+                review_passed=(review_mode == "passed"),
             )
             return self._send_html(200, body)
 
@@ -1094,21 +1383,32 @@ class AppHandler(SimpleHTTPRequestHandler):
             body = self.rfile.read(length).decode("utf-8") if length else ""
             form = parse_qs(body)
 
-            offset = _safe_int(form.get("offset", ["0"])[0], 0)
             photo_index = _safe_int(form.get("photo", ["0"])[0], 0)
+            filter_hash = " ".join(form.get("f", [""])[0].split()).strip()
+            review_mode = (
+                "passed"
+                if form.get("review", [""])[0].strip().lower() == "passed"
+                else ""
+            )
             breed_filter = _normalize_breed_filter(form.get("breed", [""])[0])
             name_filter = _normalize_name_filter(form.get("name", [""])[0])
             provider_filter = _normalize_provider_filter(form.get("provider", [""])[0])
             species_filter = _normalize_species_filter(form.get("species", [""])[0])
+            max_age_months = _normalize_max_age_filter(
+                form.get("max_age", [str(MAX_PUPPY_AGE_MONTHS)])[0]
+            )
             email = _normalize_email(form.get("email", [""])[0])
 
-            query_params = {"offset": str(offset), "photo": str(photo_index)}
+            query_params = {"photo": str(photo_index)}
             query_params = _add_active_filters(
                 query_params,
                 breed_filter=breed_filter,
                 name_filter=name_filter,
                 provider_filter=provider_filter,
                 species_filter=species_filter,
+                max_age_months=max_age_months,
+                filter_hash=filter_hash,
+                review_mode=review_mode,
             )
             if not _is_valid_email(email):
                 query_params["msg"] = "Enter a valid email address."
@@ -1148,6 +1448,12 @@ class AppHandler(SimpleHTTPRequestHandler):
                 for key, values in form.items()
                 if isinstance(values, list) and values
             }
+            filter_hash = " ".join(form.get("f", [""])[0].split()).strip()
+            review_mode = (
+                "passed"
+                if form.get("review", [""])[0].strip().lower() == "passed"
+                else ""
+            )
             try:
                 dog_id = int(form.get("dog_id", [""])[0])
             except (TypeError, ValueError):
@@ -1155,6 +1461,9 @@ class AppHandler(SimpleHTTPRequestHandler):
                 name_filter = _normalize_name_filter(form.get("name", [""])[0])
                 provider_filter = _normalize_provider_filter(form.get("provider", [""])[0])
                 species_filter = _normalize_species_filter(form.get("species", [""])[0])
+                max_age_months = _normalize_max_age_filter(
+                    form.get("max_age", [str(MAX_PUPPY_AGE_MONTHS)])[0]
+                )
                 query_params = {"msg": "Invalid dog id"}
                 query_params = _add_active_filters(
                     query_params,
@@ -1162,6 +1471,9 @@ class AppHandler(SimpleHTTPRequestHandler):
                     name_filter=name_filter,
                     provider_filter=provider_filter,
                     species_filter=species_filter,
+                    max_age_months=max_age_months,
+                    filter_hash=filter_hash,
+                    review_mode=review_mode,
                 )
                 self.send_response(303)
                 self.send_header("Location", f"/?{urlencode(query_params)}")
@@ -1173,6 +1485,9 @@ class AppHandler(SimpleHTTPRequestHandler):
             name_filter = _normalize_name_filter(form.get("name", [""])[0])
             provider_filter = _normalize_provider_filter(form.get("provider", [""])[0])
             species_filter = _normalize_species_filter(form.get("species", [""])[0])
+            max_age_months = _normalize_max_age_filter(
+                form.get("max_age", [str(MAX_PUPPY_AGE_MONTHS)])[0]
+            )
             if swipe not in ("left", "right"):
                 query_params = {"msg": "Invalid swipe value"}
                 query_params = _add_active_filters(
@@ -1181,13 +1496,15 @@ class AppHandler(SimpleHTTPRequestHandler):
                     name_filter=name_filter,
                     provider_filter=provider_filter,
                     species_filter=species_filter,
+                    max_age_months=max_age_months,
+                    filter_hash=filter_hash,
+                    review_mode=review_mode,
                 )
                 self.send_response(303)
                 self.send_header("Location", f"/?{urlencode(query_params)}")
                 self.end_headers()
                 return
 
-            offset = _safe_int(form.get("offset", ["0"])[0], 0)
             current_user = self._signed_in_user()
             current_user_id = (
                 _safe_int(str(current_user.get("id")), 0) if current_user else 0
@@ -1209,6 +1526,9 @@ class AppHandler(SimpleHTTPRequestHandler):
                     name_filter=name_filter,
                     provider_filter=provider_filter,
                     species_filter=species_filter,
+                    max_age_months=max_age_months,
+                    filter_hash=filter_hash,
+                    review_mode=review_mode,
                 )
                 query = urlencode(query_params)
                 self.send_response(303)
@@ -1216,13 +1536,16 @@ class AppHandler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 return
 
-            query_params = {"offset": str(offset + 1)}
+            query_params: dict[str, str] = {}
             query_params = _add_active_filters(
                 query_params,
                 breed_filter=breed_filter,
                 name_filter=name_filter,
                 provider_filter=provider_filter,
                 species_filter=species_filter,
+                max_age_months=max_age_months,
+                filter_hash=filter_hash,
+                review_mode=review_mode,
             )
             query = urlencode(query_params)
             self.send_response(303)
