@@ -990,6 +990,48 @@ main {
   margin: 0 auto;
 }
 
+.likes-filter-strip {
+  width: min(96vw, 980px);
+  margin: 0 auto 10px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-strong);
+  border: 1px solid var(--border-soft);
+  box-shadow: var(--shadow-md);
+  padding: 12px;
+}
+
+.likes-filter-form {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+
+.likes-filter-field {
+  display: grid;
+  gap: 6px;
+}
+
+.likes-filter-field label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.likes-filter-field input,
+.likes-filter-field select {
+  width: 100%;
+  min-height: 40px;
+  border-radius: 10px;
+  border: 1px solid rgba(24, 22, 19, 0.14);
+  padding: 8px 10px;
+  font-size: 0.88rem;
+  color: #2d2823;
+  background: rgba(255, 255, 255, 0.95);
+}
+
 .liked-grid {
   display: grid;
   gap: 12px;
@@ -1038,6 +1080,21 @@ main {
   margin: 0;
   color: var(--ink-soft);
   font-size: 0.9rem;
+}
+
+.liked-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.liked-actions .btn {
+  width: auto;
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
 }
 
 @keyframes floatIn {
@@ -1139,6 +1196,11 @@ main {
 
   .liked-card {
     grid-template-columns: 1fr;
+  }
+
+  .likes-filter-form {
+    grid-template-columns: 1fr;
+    align-items: stretch;
   }
 
   .liked-photo {

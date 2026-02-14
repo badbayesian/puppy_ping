@@ -1007,9 +1007,102 @@ def _render_likes_page(
     email: str,
     puppies: list[dict],
     total_likes: int,
+    filtered_likes: int | None = None,
+    name_filter: str = "",
+    breed_filter: str = "",
+    species_filter: str = "",
+    provider_filter: str = "",
     message: str | None = None,
 ) -> bytes:
     """Render page showing the signed-in user's liked puppies."""
+    normalized_name = _normalize_name_filter(name_filter)
+    normalized_breed = _normalize_breed_filter(breed_filter)
+    normalized_species = _normalize_species_filter(species_filter)
+    normalized_provider = _normalize_provider_filter(provider_filter)
+    escaped_name_filter = escape(normalized_name)
+    escaped_breed_filter = escape(normalized_breed)
+
+    active_filters = any(
+        (
+            normalized_name,
+            normalized_breed,
+            normalized_species,
+            normalized_provider,
+        )
+    )
+    shown_count = filtered_likes if filtered_likes is not None else len(puppies)
+    stats_copy = (
+        f"{shown_count} shown of {total_likes} liked"
+        if active_filters
+        else f"{total_likes} liked"
+    )
+
+    provider_options = ['<option value="">All providers</option>']
+    for source in PUPSWIPE_SOURCES:
+        selected_attr = " selected" if source == normalized_provider else ""
+        provider_options.append(
+            f'<option value="{escape(source)}"{selected_attr}>{escape(_provider_name(source))}</option>'
+        )
+    provider_options_html = "".join(provider_options)
+
+    species_option_values = ["", "dog", "cat", "rabbit", "bird", "other"]
+    if normalized_species and normalized_species not in species_option_values:
+        species_option_values.append(normalized_species)
+    species_options_html = "".join(
+        (
+            f'<option value="{escape(value)}"'
+            f'{" selected" if value == normalized_species else ""}>'
+            f'{escape("All species" if value == "" else value.title())}</option>'
+        )
+        for value in species_option_values
+    )
+
+    clear_link_html = (
+        '<a class="clear-filter" href="/likes">Clear</a>' if active_filters else ""
+    )
+    likes_filter_bar = f"""
+      <section class="likes-filter-strip" aria-label="Liked pet filters">
+        <form class="likes-filter-form" method="get" action="/likes">
+          <div class="likes-filter-field">
+            <label for="likes-name-filter">Name</label>
+            <input
+              id="likes-name-filter"
+              name="name"
+              type="text"
+              value="{escaped_name_filter}"
+              placeholder="e.g. Nova"
+              maxlength="{MAX_NAME_FILTER_LENGTH}"
+            />
+          </div>
+          <div class="likes-filter-field">
+            <label for="likes-breed-filter">Breed</label>
+            <input
+              id="likes-breed-filter"
+              name="breed"
+              type="text"
+              value="{escaped_breed_filter}"
+              placeholder="e.g. Labrador"
+              maxlength="{MAX_BREED_FILTER_LENGTH}"
+            />
+          </div>
+          <div class="likes-filter-field">
+            <label for="likes-species-filter">Species</label>
+            <select id="likes-species-filter" name="species">
+              {species_options_html}
+            </select>
+          </div>
+          <div class="likes-filter-field">
+            <label for="likes-provider-filter">Provider</label>
+            <select id="likes-provider-filter" name="provider">
+              {provider_options_html}
+            </select>
+          </div>
+          <button class="btn filter" type="submit">Filter</button>
+          {clear_link_html}
+        </form>
+      </section>
+    """
+
     info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
     cards_html = ""
     for pup in puppies:
@@ -1038,8 +1131,38 @@ def _render_likes_page(
                 f'<a class="profile-link" href="{profile_url}" target="_blank" rel="noopener">'
                 f"Open on {provider_name}</a>"
             )
+            share_title_raw = str(pup.get("name") or "this pet").strip() or "this pet"
+            share_animal_raw = (
+                " ".join(str(pup.get("species") or "pet").split()).strip().lower() or "pet"
+            )
+            share_body = (
+                f"I found a cute {share_animal_raw} on PupSwipe! "
+                f"Provider page: {raw_profile_url}"
+            )
+            mailto_query = urlencode(
+                {
+                    "subject": f"Check out {share_title_raw} on PupSwipe",
+                    "body": share_body,
+                }
+            )
+            share_actions_html = f"""
+              <div class="liked-actions">
+                {link_html}
+                <button
+                  class="btn subtle share-btn"
+                  type="button"
+                  data-share-url="{escape(raw_profile_url)}"
+                  data-share-title="{escape(share_title_raw)}"
+                  data-share-text="{escape(share_body)}"
+                >
+                  Copy Share
+                </button>
+                <a class="profile-link" href="mailto:?{mailto_query}">Email</a>
+              </div>
+            """
         else:
             link_html = f'<span class="provider-missing">{provider_name}</span>'
+            share_actions_html = f'<div class="liked-actions">{link_html}</div>'
 
         cards_html += f"""
           <article class="liked-card">
@@ -1053,17 +1176,68 @@ def _render_likes_page(
               </div>
               <p class="liked-time">Liked at {liked_at}</p>
               <p class="liked-id">Dog ID: {dog_id}</p>
-              {link_html}
+              {share_actions_html}
             </div>
           </article>
         """
 
     if not cards_html:
-        cards_html = """
+        empty_copy = (
+            "No liked pets match those filters."
+            if active_filters
+            else "No liked puppies yet. Swipe right on PupSwipe while signed in."
+        )
+        cards_html = f"""
           <div class="state state-empty">
-            No liked puppies yet. Swipe right on PupSwipe while signed in.
+            {escape(empty_copy)}
           </div>
         """
+
+    share_script = """
+      <script>
+        (() => {
+          const buttons = document.querySelectorAll(".share-btn");
+          if (!buttons.length) {
+            return;
+          }
+          buttons.forEach((btn) => {
+            const defaultLabel = btn.textContent || "Share";
+            btn.addEventListener("click", async () => {
+              const url = (btn.dataset.shareUrl || "").trim();
+              const title = (btn.dataset.shareTitle || "Pet profile").trim();
+              const shareText = (
+                btn.dataset.shareText ||
+                `I found a cute pet on PupSwipe! Provider page: ${url}`
+              ).trim();
+              if (!url) {
+                return;
+              }
+              try {
+                if (navigator.share) {
+                  await navigator.share({ title, text: shareText, url });
+                  return;
+                }
+              } catch {
+                // fall through to copy/prompt
+              }
+              try {
+                if (navigator.clipboard && window.isSecureContext) {
+                  await navigator.clipboard.writeText(shareText);
+                  btn.textContent = "Copied";
+                  window.setTimeout(() => {
+                    btn.textContent = defaultLabel;
+                  }, 1200);
+                  return;
+                }
+              } catch {
+                // fall through to prompt
+              }
+              window.prompt("Copy and paste this message", shareText);
+            });
+          });
+        })();
+      </script>
+    """
 
     page_html = f"""<!doctype html>
 <html lang="en">
@@ -1089,7 +1263,7 @@ def _render_likes_page(
           </div>
         </div>
         <div class="topbar-meta">
-          <div class="stats">{total_likes} liked</div>
+          <div class="stats">{stats_copy}</div>
           <a class="profile-link top-profile-link" href="/">Back to PupSwipe</a>
         </div>
         <div class="account-actions">
@@ -1103,6 +1277,7 @@ def _render_likes_page(
       </header>
       {info_msg}
       <main>
+        {likes_filter_bar}
         <section class="likes-shell">
           <div class="liked-grid">
             {cards_html}
@@ -1110,6 +1285,7 @@ def _render_likes_page(
         </section>
       </main>
     </div>
+    {share_script}
   </body>
 </html>"""
     return page_html.encode("utf-8")

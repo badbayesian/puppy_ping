@@ -1267,21 +1267,72 @@ def update_user_password(
 
 def count_liked_puppies(
     user_id: int,
+    name_filter: str = "",
+    breed_filter: str = "",
+    species_filter: str = "",
+    provider_filter: str = "",
     *,
+    sources: tuple[str, ...] | None = None,
     connection_factory: Callable = get_connection,
     ensure_schema_fn: Callable = ensure_app_schema,
 ) -> int:
     """Count likes for a given user."""
+    active_sources = tuple(sources or get_pupswipe_sources())
+    normalized_name = _normalize_name_filter(name_filter)
+    normalized_breed = _normalize_breed_filter(breed_filter)
+    normalized_species = _normalize_species_filter(species_filter)
+    normalized_provider = _normalize_provider_filter(provider_filter, active_sources)
     with connection_factory() as conn:
         ensure_schema_fn(conn)
         with conn.cursor() as cur:
             cur.execute(
                 """
+                WITH liked AS (
+                    SELECT pet_id, species, source
+                    FROM pet_likes
+                    WHERE user_id = %s
+                ), latest AS (
+                    SELECT DISTINCT ON (pet_id, species)
+                        pet_id,
+                        species,
+                        url,
+                        name,
+                        breed,
+                        scraped_at_utc
+                    FROM pet_profiles
+                    ORDER BY pet_id, species, scraped_at_utc DESC
+                )
                 SELECT count(*)
-                FROM pet_likes
-                WHERE user_id = %s;
+                FROM liked
+                LEFT JOIN latest
+                  ON latest.pet_id = liked.pet_id
+                 AND latest.species = liked.species
+                LEFT JOIN LATERAL (
+                    SELECT source
+                    FROM pet_status
+                    WHERE pet_status.link = latest.url
+                      AND pet_status.source = ANY(%s::text[])
+                    ORDER BY pet_status.is_active DESC, pet_status.source ASC
+                    LIMIT 1
+                ) AS status_pick
+                  ON true
+                WHERE (%s = '' OR COALESCE(liked.species, '') = %s)
+                  AND (%s = '' OR COALESCE(status_pick.source, liked.source, '') = %s)
+                  AND (%s = '' OR COALESCE(latest.name, '') ILIKE %s ESCAPE '\\')
+                  AND (%s = '' OR COALESCE(latest.breed, '') ILIKE %s ESCAPE '\\');
                 """,
-                (user_id,),
+                (
+                    user_id,
+                    list(active_sources),
+                    normalized_species,
+                    normalized_species,
+                    normalized_provider,
+                    normalized_provider,
+                    normalized_name,
+                    _text_like_pattern(normalized_name),
+                    normalized_breed,
+                    _text_like_pattern(normalized_breed),
+                ),
             )
             row = cur.fetchone()
     return int(row[0]) if row else 0
@@ -1291,6 +1342,10 @@ def fetch_liked_puppies(
     user_id: int,
     limit: int = 120,
     offset: int = 0,
+    name_filter: str = "",
+    breed_filter: str = "",
+    species_filter: str = "",
+    provider_filter: str = "",
     *,
     sources: tuple[str, ...] | None = None,
     connection_factory: Callable = get_connection,
@@ -1300,6 +1355,10 @@ def fetch_liked_puppies(
     active_sources = tuple(sources or get_pupswipe_sources())
     page_limit = max(1, min(200, int(limit)))
     page_offset = max(0, int(offset))
+    normalized_name = _normalize_name_filter(name_filter)
+    normalized_breed = _normalize_breed_filter(breed_filter)
+    normalized_species = _normalize_species_filter(species_filter)
+    normalized_provider = _normalize_provider_filter(provider_filter, active_sources)
     with connection_factory() as conn:
         ensure_schema_fn(conn)
         with conn.cursor() as cur:
@@ -1359,9 +1418,26 @@ def fetch_liked_puppies(
                     LIMIT 1
                 ) AS status_pick
                   ON true
+                WHERE (%s = '' OR COALESCE(liked.species, '') = %s)
+                  AND (%s = '' OR COALESCE(status_pick.source, liked.source, '') = %s)
+                  AND (%s = '' OR COALESCE(latest.name, '') ILIKE %s ESCAPE '\\')
+                  AND (%s = '' OR COALESCE(latest.breed, '') ILIKE %s ESCAPE '\\')
                 ORDER BY liked.created_at_utc DESC, liked.pet_id DESC, liked.species ASC;
                 """,
-                (user_id, page_limit, page_offset, list(active_sources)),
+                (
+                    user_id,
+                    page_limit,
+                    page_offset,
+                    list(active_sources),
+                    normalized_species,
+                    normalized_species,
+                    normalized_provider,
+                    normalized_provider,
+                    normalized_name,
+                    _text_like_pattern(normalized_name),
+                    normalized_breed,
+                    _text_like_pattern(normalized_breed),
+                ),
             )
             rows = cur.fetchall()
             columns = [col.name for col in cur.description]

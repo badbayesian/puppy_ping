@@ -525,21 +525,44 @@ def _update_user_password(user_id: int, current_password: str, new_password: str
     )
 
 
-def _count_liked_puppies(user_id: int) -> int:
+def _count_liked_puppies(
+    user_id: int,
+    name_filter: str = "",
+    breed_filter: str = "",
+    species_filter: str = "",
+    provider_filter: str = "",
+) -> int:
     """Count likes for a given user."""
     return repo_count_liked_puppies(
         user_id,
+        name_filter=name_filter,
+        breed_filter=breed_filter,
+        species_filter=species_filter,
+        provider_filter=provider_filter,
+        sources=PUPSWIPE_SOURCES,
         connection_factory=get_connection,
         ensure_schema_fn=_ensure_app_schema,
     )
 
 
-def _fetch_liked_puppies(user_id: int, limit: int = 120, offset: int = 0) -> list[dict]:
+def _fetch_liked_puppies(
+    user_id: int,
+    limit: int = 120,
+    offset: int = 0,
+    name_filter: str = "",
+    breed_filter: str = "",
+    species_filter: str = "",
+    provider_filter: str = "",
+) -> list[dict]:
     """Load a user's liked puppies ordered by most recently liked."""
     return repo_fetch_liked_puppies(
         user_id=user_id,
         limit=limit,
         offset=offset,
+        name_filter=name_filter,
+        breed_filter=breed_filter,
+        species_filter=species_filter,
+        provider_filter=provider_filter,
         sources=PUPSWIPE_SOURCES,
         connection_factory=get_connection,
         ensure_schema_fn=_ensure_app_schema,
@@ -666,6 +689,11 @@ def _render_likes_page(
     email: str,
     puppies: list[dict],
     total_likes: int,
+    filtered_likes: int | None = None,
+    name_filter: str = "",
+    breed_filter: str = "",
+    species_filter: str = "",
+    provider_filter: str = "",
     message: str | None = None,
 ) -> bytes:
     _sync_page_context()
@@ -673,6 +701,11 @@ def _render_likes_page(
         email=email,
         puppies=puppies,
         total_likes=total_likes,
+        filtered_likes=filtered_likes,
+        name_filter=name_filter,
+        breed_filter=breed_filter,
+        species_filter=species_filter,
+        provider_filter=provider_filter,
         message=message,
     )
 
@@ -1028,18 +1061,42 @@ class AppHandler(SimpleHTTPRequestHandler):
                 self.send_header("Location", f"/signin?{query}")
                 self.end_headers()
                 return
-            message = parse_qs(parsed.query).get("msg", [None])[0]
+            likes_query = parse_qs(parsed.query)
+            message = likes_query.get("msg", [None])[0]
+            name_filter = _normalize_name_filter(likes_query.get("name", [""])[0])
+            breed_filter = _normalize_breed_filter(likes_query.get("breed", [""])[0])
+            species_filter = _normalize_species_filter(likes_query.get("species", [""])[0])
+            provider_filter = _normalize_provider_filter(likes_query.get("provider", [""])[0])
             try:
                 user_id = _safe_int(str(current_user.get("id")), 0)
                 if user_id <= 0:
                     raise ValueError("invalid user id")
                 total_likes = _count_liked_puppies(user_id)
-                puppies = _fetch_liked_puppies(user_id=user_id, limit=120)
+                filtered_likes = _count_liked_puppies(
+                    user_id,
+                    name_filter=name_filter,
+                    breed_filter=breed_filter,
+                    species_filter=species_filter,
+                    provider_filter=provider_filter,
+                )
+                puppies = _fetch_liked_puppies(
+                    user_id=user_id,
+                    limit=120,
+                    name_filter=name_filter,
+                    breed_filter=breed_filter,
+                    species_filter=species_filter,
+                    provider_filter=provider_filter,
+                )
             except Exception as exc:
                 body = _render_likes_page(
                     email=str(current_user.get("email") or ""),
                     puppies=[],
                     total_likes=0,
+                    filtered_likes=0,
+                    name_filter=name_filter,
+                    breed_filter=breed_filter,
+                    species_filter=species_filter,
+                    provider_filter=provider_filter,
                     message=f"Failed to load liked puppies: {exc}",
                 )
                 return self._send_html(200, body)
@@ -1048,6 +1105,11 @@ class AppHandler(SimpleHTTPRequestHandler):
                 email=str(current_user.get("email") or ""),
                 puppies=puppies,
                 total_likes=total_likes,
+                filtered_likes=filtered_likes,
+                name_filter=name_filter,
+                breed_filter=breed_filter,
+                species_filter=species_filter,
+                provider_filter=provider_filter,
                 message=message,
             )
             return self._send_html(200, body)

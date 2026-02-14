@@ -571,6 +571,59 @@ def test_render_page_shows_auth_links_by_signin_state(monkeypatch):
     assert "Sign out" in signed_in_html
 
 
+def test_render_likes_page_shows_filters_and_filtered_stats():
+    html = pupswipe._render_likes_page(
+        email="person@gmail.com",
+        puppies=[],
+        total_likes=10,
+        filtered_likes=3,
+        name_filter="Nova",
+        breed_filter="Lab",
+        species_filter="cat",
+        provider_filter="wright_way",
+    ).decode("utf-8")
+    assert "3 shown of 10 liked" in html
+    assert 'id="likes-name-filter"' in html
+    assert 'id="likes-breed-filter"' in html
+    assert 'id="likes-species-filter"' in html
+    assert 'id="likes-provider-filter"' in html
+    assert 'option value="cat" selected' in html
+    assert 'option value="wright_way" selected' in html
+    assert 'href="/likes">Clear</a>' in html
+    assert "No liked pets match those filters." in html
+
+
+def test_render_likes_page_has_share_actions():
+    html = pupswipe._render_likes_page(
+        email="person@gmail.com",
+        puppies=[
+            {
+                "dog_id": 7,
+                "species": "dog",
+                "name": "Maple",
+                "breed": "Mix",
+                "age_raw": "6 months",
+                "location": "Chicago, IL",
+                "status": "Available",
+                "liked_at_utc": "2026-02-14T00:00:00+00:00",
+                "url": "https://example.com/pets/7",
+                "source": "wright_way",
+                "media": {"images": ["https://example.com/maple.jpg"]},
+            }
+        ],
+        total_likes=1,
+    ).decode("utf-8")
+    assert 'class="btn subtle share-btn"' in html
+    assert 'data-share-url="https://example.com/pets/7"' in html
+    assert (
+        'data-share-text="I found a cute dog on PupSwipe! Provider page: '
+        'https://example.com/pets/7"'
+    ) in html
+    assert "Copy Share" in html
+    assert "mailto:?" in html
+    assert "Open on Wright-Way Rescue" in html
+
+
 def test_password_hash_round_trip():
     password = "supersecret123"
     password_hash = pupswipe._hash_password(password)
