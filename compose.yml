@@ -1,7 +1,7 @@
 services:
   puppyping:
     build:
-      context: . #https://github.com/badbayesian/puppy_ping.git
+      context: /mnt/thebutler/media/repos/puppy_ping
       dockerfile: Dockerfile
     container_name: puppyping-scraper
     environment:
@@ -70,7 +70,7 @@ services:
 
   pupswipe:
     build:
-      context: .
+      context: /mnt/thebutler/media/repos/puppy_ping
       dockerfile: Dockerfile
     container_name: puppyping-pupswipe
     pull_policy: always
@@ -95,15 +95,15 @@ services:
       - --host
       - 0.0.0.0
       - --port
-      - "${PUPSWIPE_PORT:-8000}"
+      - "${PUPSWIPE_PORT:-8010}"
     ports:
-      - "${PUPSWIPE_BIND_IP:-0.0.0.0}:${PUPSWIPE_PORT:-8000}:8000"
+      - "${PUPSWIPE_BIND_IP:-0.0.0.0}:${PUPSWIPE_PORT:-8010}:${PUPSWIPE_PORT:-8010}"
     healthcheck:
       test:
         - CMD
         - python
         - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)"
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:${PUPSWIPE_PORT:-8010}/api/health', timeout=5)"
       interval: 30s
       timeout: 5s
       retries: 3
