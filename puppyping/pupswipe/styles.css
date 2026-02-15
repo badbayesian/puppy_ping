@@ -1032,6 +1032,18 @@ main {
   background: rgba(255, 255, 255, 0.95);
 }
 
+.likes-bulk-actions {
+  width: min(96vw, 980px);
+  margin: 0 auto 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.likes-bulk-actions form {
+  margin: 0;
+}
+
 .liked-grid {
   display: grid;
   gap: 12px;
@@ -1046,6 +1058,15 @@ main {
   border: 1px solid var(--border-soft);
   box-shadow: var(--shadow-md);
   padding: 12px;
+}
+
+.liked-card.is-unavailable {
+  opacity: 0.62;
+  filter: grayscale(0.45);
+}
+
+.liked-card.is-unavailable .liked-photo img {
+  filter: grayscale(1);
 }
 
 .liked-photo {
@@ -1095,6 +1116,21 @@ main {
   padding: 0 12px;
   font-size: 0.72rem;
   letter-spacing: 0.05em;
+}
+
+.badge-unavailable {
+  background: rgba(115, 43, 43, 0.14);
+  color: #6f2525;
+}
+
+.btn.subtle.danger {
+  color: #7e2b2b;
+  border-color: rgba(126, 43, 43, 0.3);
+  background: rgba(126, 43, 43, 0.08);
+}
+
+.btn.subtle.danger:hover {
+  background: rgba(126, 43, 43, 0.16);
 }
 
 @keyframes floatIn {

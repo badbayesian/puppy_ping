@@ -594,6 +594,9 @@ def test_render_likes_page_shows_filters_and_filtered_stats():
     assert 'option value="cat" selected' in html
     assert 'option value="wright_way" selected' in html
     assert 'href="/likes">Clear</a>' in html
+    assert "Remove unavailable" in html
+    assert "Remove all shown" in html
+    assert 'action="/likes/remove-all"' in html
     assert "No liked pets match those filters." in html
 
 
@@ -626,6 +629,35 @@ def test_render_likes_page_has_share_actions():
     assert "Copy Share" in html
     assert "mailto:?" in html
     assert "Open on Wright-Way Rescue" in html
+    assert 'action="/likes/remove"' in html
+    assert 'name="pet_id" value="7"' in html
+    assert 'name="pet_species" value="dog"' in html
+    assert "Remove</button>" in html
+
+
+def test_render_likes_page_marks_unavailable_cards():
+    html = pupswipe._render_likes_page(
+        email="person@gmail.com",
+        puppies=[
+            {
+                "pet_id": 9,
+                "species": "dog",
+                "name": "Scout",
+                "breed": "Mix",
+                "age_raw": "2 years",
+                "location": "Chicago, IL",
+                "status": "Available",
+                "is_active": False,
+                "liked_at_utc": "2026-02-14T00:00:00+00:00",
+                "url": "https://example.com/pets/9",
+                "source": "paws_chicago",
+                "media": {"images": ["https://example.com/scout.jpg"]},
+            }
+        ],
+        total_likes=1,
+    ).decode("utf-8")
+    assert 'class="liked-card is-unavailable"' in html
+    assert "No longer available" in html
 
 
 def test_password_hash_round_trip():

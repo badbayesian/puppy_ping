@@ -1003,6 +1003,16 @@ def _format_liked_time(value) -> str:
     return text.replace("T", " ").replace("+00:00", " UTC")
 
 
+def _is_liked_pet_available(pup: dict) -> bool:
+    """Return whether a liked pet is currently available."""
+    status_text = " ".join(str(pup.get("status") or "").split()).strip().lower()
+    status_available = status_text.startswith("available")
+    is_active_value = pup.get("is_active")
+    if isinstance(is_active_value, bool):
+        return status_available and is_active_value
+    return status_available
+
+
 def _render_likes_page(
     email: str,
     puppies: list[dict],
@@ -1060,6 +1070,24 @@ def _render_likes_page(
     clear_link_html = (
         '<a class="clear-filter" href="/likes">Clear</a>' if active_filters else ""
     )
+    likes_filter_hidden_inputs: list[str] = []
+    if normalized_name:
+        likes_filter_hidden_inputs.append(
+            f'<input type="hidden" name="name" value="{escape(normalized_name)}" />'
+        )
+    if normalized_breed:
+        likes_filter_hidden_inputs.append(
+            f'<input type="hidden" name="breed" value="{escape(normalized_breed)}" />'
+        )
+    if normalized_species:
+        likes_filter_hidden_inputs.append(
+            f'<input type="hidden" name="species" value="{escape(normalized_species)}" />'
+        )
+    if normalized_provider:
+        likes_filter_hidden_inputs.append(
+            f'<input type="hidden" name="provider" value="{escape(normalized_provider)}" />'
+        )
+    likes_filter_hidden_inputs_html = "\n              ".join(likes_filter_hidden_inputs)
     likes_filter_bar = f"""
       <section class="likes-filter-strip" aria-label="Liked pet filters">
         <form class="likes-filter-form" method="get" action="/likes">
@@ -1102,21 +1130,52 @@ def _render_likes_page(
         </form>
       </section>
     """
+    bulk_actions_html = f"""
+      <section class="likes-bulk-actions" aria-label="Liked pet actions">
+        <form method="post" action="/likes/remove-all">
+          <input type="hidden" name="mode" value="unavailable" />
+          {likes_filter_hidden_inputs_html}
+          <button
+            class="btn subtle"
+            type="submit"
+            onclick="return confirm('Remove all unavailable pets from your liked list?');"
+          >
+            Remove unavailable
+          </button>
+        </form>
+        <form method="post" action="/likes/remove-all">
+          <input type="hidden" name="mode" value="all" />
+          {likes_filter_hidden_inputs_html}
+          <button
+            class="btn subtle"
+            type="submit"
+            onclick="return confirm('Remove all pets in this liked view?');"
+          >
+            Remove all shown
+          </button>
+        </form>
+      </section>
+    """
 
     info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
     cards_html = ""
     for pup in puppies:
-        dog_id = _safe_int(str(pup.get("dog_id")), 0)
+        dog_id = _safe_int(str(pup.get("pet_id") or pup.get("dog_id")), 0)
         name = escape(str(pup.get("name") or "Unnamed pup"))
         breed = escape(str(pup.get("breed") or "Unknown breed"))
         age_raw = escape(str(pup.get("age_raw") or "Age unknown"))
         location = escape(str(pup.get("location") or "Unknown location"))
         status = escape(str(pup.get("status") or "Status unknown"))
+        is_available_now = _is_liked_pet_available(pup)
+        card_class = "liked-card" if is_available_now else "liked-card is-unavailable"
         liked_at = escape(_format_liked_time(pup.get("liked_at_utc")))
         raw_profile_url = str(pup.get("url") or "").strip()
         profile_url = escape(raw_profile_url or "#")
         source_key = str(pup.get("source")) if pup.get("source") is not None else None
         provider_name = escape(_provider_name(source_key, raw_profile_url))
+        pet_species = (
+            " ".join(str(pup.get("species") or "dog").split()).strip().lower() or "dog"
+        )
         photo_url = _get_primary_image(pup)
         if photo_url:
             image_html = (
@@ -1158,14 +1217,30 @@ def _render_likes_page(
                   Copy Share
                 </button>
                 <a class="profile-link" href="mailto:?{mailto_query}">Email</a>
+                <form class="inline-form" method="post" action="/likes/remove">
+                  <input type="hidden" name="pet_id" value="{dog_id}" />
+                  <input type="hidden" name="pet_species" value="{escape(pet_species)}" />
+                  {likes_filter_hidden_inputs_html}
+                  <button class="btn subtle danger" type="submit">Remove</button>
+                </form>
               </div>
             """
         else:
             link_html = f'<span class="provider-missing">{provider_name}</span>'
-            share_actions_html = f'<div class="liked-actions">{link_html}</div>'
+            share_actions_html = f"""
+              <div class="liked-actions">
+                {link_html}
+                <form class="inline-form" method="post" action="/likes/remove">
+                  <input type="hidden" name="pet_id" value="{dog_id}" />
+                  <input type="hidden" name="pet_species" value="{escape(pet_species)}" />
+                  {likes_filter_hidden_inputs_html}
+                  <button class="btn subtle danger" type="submit">Remove</button>
+                </form>
+              </div>
+            """
 
         cards_html += f"""
-          <article class="liked-card">
+          <article class="{card_class}">
             <div class="liked-photo">{image_html}</div>
             <div class="liked-body">
               <h3>{name}</h3>
@@ -1173,9 +1248,10 @@ def _render_likes_page(
               <div class="badges">
                 <span class="badge">{status}</span>
                 <span class="badge badge-provider">{provider_name}</span>
+                {'<span class="badge badge-unavailable">No longer available</span>' if not is_available_now else ''}
               </div>
               <p class="liked-time">Liked at {liked_at}</p>
-              <p class="liked-id">Dog ID: {dog_id}</p>
+              <p class="liked-id">Pet ID: {dog_id}</p>
               {share_actions_html}
             </div>
           </article>
@@ -1278,6 +1354,7 @@ def _render_likes_page(
       {info_msg}
       <main>
         {likes_filter_bar}
+        {bulk_actions_html}
         <section class="likes-shell">
           <div class="liked-grid">
             {cards_html}

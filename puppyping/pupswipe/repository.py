@@ -1394,6 +1394,7 @@ def fetch_liked_puppies(
                     liked.species,
                     liked.created_at_utc AS liked_at_utc,
                     COALESCE(status_pick.source, liked.source) AS source,
+                    COALESCE(status_pick.is_active, false) AS is_active,
                     latest.url,
                     latest.name,
                     latest.breed,
@@ -1410,7 +1411,7 @@ def fetch_liked_puppies(
                   ON latest.pet_id = liked.pet_id
                  AND latest.species = liked.species
                 LEFT JOIN LATERAL (
-                    SELECT source
+                    SELECT source, is_active
                     FROM pet_status
                     WHERE pet_status.link = latest.url
                       AND pet_status.source = ANY(%s::text[])
@@ -1452,3 +1453,127 @@ def fetch_liked_puppies(
         record["primary_image"] = images[0] if images else None
         liked_pups.append(record)
     return liked_pups
+
+
+def delete_liked_pet(
+    user_id: int,
+    pet_id: int,
+    species: str = "",
+    *,
+    connection_factory: Callable = get_connection,
+    ensure_schema_fn: Callable = ensure_app_schema,
+) -> int:
+    """Delete a single liked pet for a user.
+
+    Returns:
+        Number of likes removed (0 or 1).
+    """
+    normalized_species = _normalize_species(species, default="dog")
+    with connection_factory() as conn:
+        ensure_schema_fn(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM pet_likes
+                WHERE user_id = %s
+                  AND pet_id = %s
+                  AND species = %s;
+                """,
+                (user_id, pet_id, normalized_species),
+            )
+            deleted = cur.rowcount
+        conn.commit()
+    return int(deleted or 0)
+
+
+def delete_liked_puppies(
+    user_id: int,
+    *,
+    name_filter: str = "",
+    breed_filter: str = "",
+    species_filter: str = "",
+    provider_filter: str = "",
+    only_unavailable: bool = False,
+    sources: tuple[str, ...] | None = None,
+    connection_factory: Callable = get_connection,
+    ensure_schema_fn: Callable = ensure_app_schema,
+) -> int:
+    """Delete liked pets for a user, optionally scoped by filters.
+
+    Args:
+        only_unavailable: When True, only remove likes for pets that are no
+            longer active/available.
+
+    Returns:
+        Number of likes removed.
+    """
+    active_sources = tuple(sources or get_pupswipe_sources())
+    normalized_name = _normalize_name_filter(name_filter)
+    normalized_breed = _normalize_breed_filter(breed_filter)
+    normalized_species = _normalize_species_filter(species_filter)
+    normalized_provider = _normalize_provider_filter(provider_filter, active_sources)
+    with connection_factory() as conn:
+        ensure_schema_fn(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH liked AS (
+                    SELECT id, pet_id, species, source
+                    FROM pet_likes
+                    WHERE user_id = %s
+                ), latest AS (
+                    SELECT DISTINCT ON (pet_id, species)
+                        pet_id,
+                        species,
+                        url,
+                        name,
+                        breed,
+                        status,
+                        scraped_at_utc
+                    FROM pet_profiles
+                    ORDER BY pet_id, species, scraped_at_utc DESC
+                ), target AS (
+                    SELECT liked.id
+                    FROM liked
+                    LEFT JOIN latest
+                      ON latest.pet_id = liked.pet_id
+                     AND latest.species = liked.species
+                    LEFT JOIN LATERAL (
+                        SELECT source, is_active
+                        FROM pet_status
+                        WHERE pet_status.link = latest.url
+                          AND pet_status.source = ANY(%s::text[])
+                        ORDER BY pet_status.is_active DESC, pet_status.source ASC
+                        LIMIT 1
+                    ) AS status_pick
+                      ON true
+                    WHERE (%s = '' OR COALESCE(liked.species, '') = %s)
+                      AND (%s = '' OR COALESCE(status_pick.source, liked.source, '') = %s)
+                      AND (%s = '' OR COALESCE(latest.name, '') ILIKE %s ESCAPE '\\')
+                      AND (%s = '' OR COALESCE(latest.breed, '') ILIKE %s ESCAPE '\\')
+                      AND (
+                            %s = false
+                            OR COALESCE(status_pick.is_active, false) = false
+                            OR COALESCE(latest.status, '') NOT ILIKE 'Available%%'
+                      )
+                )
+                DELETE FROM pet_likes
+                WHERE id IN (SELECT id FROM target);
+                """,
+                (
+                    user_id,
+                    list(active_sources),
+                    normalized_species,
+                    normalized_species,
+                    normalized_provider,
+                    normalized_provider,
+                    normalized_name,
+                    _text_like_pattern(normalized_name),
+                    normalized_breed,
+                    _text_like_pattern(normalized_breed),
+                    bool(only_unavailable),
+                ),
+            )
+            deleted = cur.rowcount
+        conn.commit()
+    return int(deleted or 0)

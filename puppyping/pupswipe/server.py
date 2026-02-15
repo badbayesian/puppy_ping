@@ -53,6 +53,8 @@ from puppyping.pupswipe.config import (
 from puppyping.pupswipe.repository import (
     count_passed_puppies as repo_count_passed_puppies,
     consume_password_reset_token as repo_consume_password_reset_token,
+    delete_liked_pet as repo_delete_liked_pet,
+    delete_liked_puppies as repo_delete_liked_puppies,
     count_puppies as repo_count_puppies,
     count_unseen_puppies as repo_count_unseen_puppies,
     count_liked_puppies as repo_count_liked_puppies,
@@ -563,6 +565,44 @@ def _fetch_liked_puppies(
         breed_filter=breed_filter,
         species_filter=species_filter,
         provider_filter=provider_filter,
+        sources=PUPSWIPE_SOURCES,
+        connection_factory=get_connection,
+        ensure_schema_fn=_ensure_app_schema,
+    )
+
+
+def _remove_liked_pet(
+    user_id: int,
+    pet_id: int,
+    species: str = "",
+) -> int:
+    """Remove a single liked pet for a user."""
+    return repo_delete_liked_pet(
+        user_id=user_id,
+        pet_id=pet_id,
+        species=species,
+        connection_factory=get_connection,
+        ensure_schema_fn=_ensure_app_schema,
+    )
+
+
+def _remove_liked_puppies(
+    user_id: int,
+    *,
+    name_filter: str = "",
+    breed_filter: str = "",
+    species_filter: str = "",
+    provider_filter: str = "",
+    only_unavailable: bool = False,
+) -> int:
+    """Bulk-remove liked pets for a user."""
+    return repo_delete_liked_puppies(
+        user_id=user_id,
+        name_filter=name_filter,
+        breed_filter=breed_filter,
+        species_filter=species_filter,
+        provider_filter=provider_filter,
+        only_unavailable=only_unavailable,
         sources=PUPSWIPE_SOURCES,
         connection_factory=get_connection,
         ensure_schema_fn=_ensure_app_schema,
@@ -1437,6 +1477,141 @@ class AppHandler(SimpleHTTPRequestHandler):
             query = urlencode({"msg": "Password updated."})
             self.send_response(303)
             self.send_header("Location", f"/likes?{query}")
+            self.end_headers()
+            return
+
+        if parsed.path == "/likes/remove":
+            current_user = self._signed_in_user()
+            if not current_user:
+                query = urlencode(
+                    {"next": "/likes", "msg": "Sign in to manage liked pets."}
+                )
+                self.send_response(303)
+                self.send_header("Location", f"/signin?{query}")
+                self.end_headers()
+                return
+
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length).decode("utf-8") if length else ""
+            form = parse_qs(body)
+            user_id = _safe_int(str(current_user.get("id")), 0)
+            pet_id = _safe_int(form.get("pet_id", ["0"])[0], 0)
+            pet_species = " ".join(form.get("pet_species", [""])[0].split()).strip()
+            name_filter = _normalize_name_filter(form.get("name", [""])[0])
+            breed_filter = _normalize_breed_filter(form.get("breed", [""])[0])
+            species_filter = _normalize_species_filter(form.get("species", [""])[0])
+            provider_filter = _normalize_provider_filter(form.get("provider", [""])[0])
+
+            query_params: dict[str, str] = {}
+            if name_filter:
+                query_params["name"] = name_filter
+            if breed_filter:
+                query_params["breed"] = breed_filter
+            if species_filter:
+                query_params["species"] = species_filter
+            if provider_filter:
+                query_params["provider"] = provider_filter
+
+            if user_id <= 0 or pet_id <= 0:
+                query_params["msg"] = "Unable to remove liked pet."
+                self.send_response(303)
+                self.send_header("Location", f"/likes?{urlencode(query_params)}")
+                self.end_headers()
+                return
+
+            try:
+                removed = _remove_liked_pet(
+                    user_id=user_id,
+                    pet_id=pet_id,
+                    species=pet_species,
+                )
+            except Exception as exc:
+                query_params["msg"] = f"Failed to remove liked pet: {exc}"
+                self.send_response(303)
+                self.send_header("Location", f"/likes?{urlencode(query_params)}")
+                self.end_headers()
+                return
+
+            query_params["msg"] = (
+                "Removed pet from liked list."
+                if removed > 0
+                else "Pet was already removed from liked list."
+            )
+            self.send_response(303)
+            self.send_header("Location", f"/likes?{urlencode(query_params)}")
+            self.end_headers()
+            return
+
+        if parsed.path == "/likes/remove-all":
+            current_user = self._signed_in_user()
+            if not current_user:
+                query = urlencode(
+                    {"next": "/likes", "msg": "Sign in to manage liked pets."}
+                )
+                self.send_response(303)
+                self.send_header("Location", f"/signin?{query}")
+                self.end_headers()
+                return
+
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length).decode("utf-8") if length else ""
+            form = parse_qs(body)
+            user_id = _safe_int(str(current_user.get("id")), 0)
+            mode = " ".join(form.get("mode", ["all"])[0].split()).strip().lower()
+            only_unavailable = mode == "unavailable"
+            name_filter = _normalize_name_filter(form.get("name", [""])[0])
+            breed_filter = _normalize_breed_filter(form.get("breed", [""])[0])
+            species_filter = _normalize_species_filter(form.get("species", [""])[0])
+            provider_filter = _normalize_provider_filter(form.get("provider", [""])[0])
+
+            query_params: dict[str, str] = {}
+            if name_filter:
+                query_params["name"] = name_filter
+            if breed_filter:
+                query_params["breed"] = breed_filter
+            if species_filter:
+                query_params["species"] = species_filter
+            if provider_filter:
+                query_params["provider"] = provider_filter
+
+            if user_id <= 0:
+                query_params["msg"] = "Unable to manage liked pets."
+                self.send_response(303)
+                self.send_header("Location", f"/likes?{urlencode(query_params)}")
+                self.end_headers()
+                return
+
+            try:
+                removed = _remove_liked_puppies(
+                    user_id=user_id,
+                    name_filter=name_filter,
+                    breed_filter=breed_filter,
+                    species_filter=species_filter,
+                    provider_filter=provider_filter,
+                    only_unavailable=only_unavailable,
+                )
+            except Exception as exc:
+                query_params["msg"] = f"Failed to remove liked pets: {exc}"
+                self.send_response(303)
+                self.send_header("Location", f"/likes?{urlencode(query_params)}")
+                self.end_headers()
+                return
+
+            if removed <= 0:
+                query_params["msg"] = (
+                    "No unavailable liked pets to remove."
+                    if only_unavailable
+                    else "No liked pets to remove."
+                )
+            else:
+                query_params["msg"] = (
+                    f"Removed {removed} unavailable liked pet"
+                    f"{'' if removed == 1 else 's'}."
+                    if only_unavailable
+                    else f"Removed {removed} liked pet{'' if removed == 1 else 's'}."
+                )
+            self.send_response(303)
+            self.send_header("Location", f"/likes?{urlencode(query_params)}")
             self.end_headers()
             return
 
