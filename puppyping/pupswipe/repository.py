@@ -485,8 +485,8 @@ def fetch_puppies(
                         swipe
                     FROM pet_swipes
                     WHERE (
-                        (%s IS NOT NULL AND user_id = %s)
-                        OR (%s <> '' AND user_key = %s)
+                        (%s::BIGINT IS NOT NULL AND user_id = %s::BIGINT)
+                        OR (%s::TEXT <> '' AND user_key = %s::TEXT)
                     )
                     ORDER BY pet_id, COALESCE(species, ''), created_at_utc DESC, id DESC
                 )
@@ -511,8 +511,8 @@ def fetch_puppies(
                     WHERE seen.pet_id = active.pet_id
                       AND COALESCE(seen.species, '') = COALESCE(active.species, '')
                       AND (
-                        (%s IS NOT NULL AND seen.user_id = %s)
-                        OR (%s <> '' AND seen.user_key = %s)
+                        (%s::BIGINT IS NOT NULL AND seen.user_id = %s::BIGINT)
+                        OR (%s::TEXT <> '' AND seen.user_key = %s::TEXT)
                       )
                   )
                 """
@@ -754,8 +754,8 @@ def count_unseen_puppies(
                     WHERE seen.pet_id = latest.pet_id
                       AND COALESCE(seen.species, '') = COALESCE(latest.species, '')
                       AND (
-                        (%s IS NOT NULL AND seen.user_id = %s)
-                        OR (%s <> '' AND seen.user_key = %s)
+                        (%s::BIGINT IS NOT NULL AND seen.user_id = %s::BIGINT)
+                        OR (%s::TEXT <> '' AND seen.user_key = %s::TEXT)
                       )
                   );
                 """,
@@ -843,8 +843,8 @@ def count_passed_puppies(
                         swipe
                     FROM pet_swipes
                     WHERE (
-                        (%s IS NOT NULL AND user_id = %s)
-                        OR (%s <> '' AND user_key = %s)
+                        (%s::BIGINT IS NOT NULL AND user_id = %s::BIGINT)
+                        OR (%s::TEXT <> '' AND user_key = %s::TEXT)
                     )
                     ORDER BY pet_id, COALESCE(species, ''), created_at_utc DESC, id DESC
                 )

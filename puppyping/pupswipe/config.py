@@ -18,7 +18,7 @@ PASSWORD_RESET_TOKEN_TTL_MINUTES = 30
 SESSION_COOKIE_NAME = "pupswipe_session"
 SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 DEFAULT_SESSION_SECRET = "pupswipe-dev-session-secret-change-me"
-DEFAULT_PUPSWIPE_SOURCES = ("paws_chicago", "wright_way")
+DEFAULT_PUPSWIPE_SOURCES = ("paws_chicago", "wright_way", "anti_cruelty")
 PROVIDER_DISCLAIMER = (
     "PuppyPing is not affiliated with any dog rescue, shelter, breeder, "
     "or adoption provider."
@@ -39,10 +39,14 @@ def provider_name(source: str | None, profile_url: str | None = None) -> str:
         return "PAWS Chicago"
     if source == "wright_way":
         return "Wright-Way Rescue"
+    if source == "anti_cruelty":
+        return "Anti-Cruelty"
 
     url = (profile_url or "").lower()
     if "pawschicago.org" in url:
         return "PAWS Chicago"
     if "petango.com" in url or "wright-wayrescue.org" in url:
         return "Wright-Way Rescue"
+    if "anticruelty.org" in url or "shelterluv.com/embed/animal/acil-" in url:
+        return "Anti-Cruelty"
     return "Adoption Provider"

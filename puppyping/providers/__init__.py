@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import Callable
 
+from .anti_cruelty import (
+    fetch_adoptable_pet_profile_links_anti_cruelty,
+    fetch_pet_profile_anti_cruelty,
+)
 from .paws import fetch_adoptable_pet_profile_links_paws, fetch_pet_profile_paws
 from .wrightway import (
     fetch_adoptable_pet_profile_links_wrightway,
@@ -11,11 +15,13 @@ from ..models import PetProfile
 
 
 FETCH_PET_LINKS: dict[str, Callable[[bool], set[str]]] = {
+    "anti_cruelty": fetch_adoptable_pet_profile_links_anti_cruelty,
     "paws_chicago": fetch_adoptable_pet_profile_links_paws,
     "wright_way": fetch_adoptable_pet_profile_links_wrightway,
 }
 
 FETCH_PET_PROFILE: dict[str, Callable[[str], PetProfile]] = {
+    "anti_cruelty": fetch_pet_profile_anti_cruelty,
     "paws_chicago": fetch_pet_profile_paws,
     "wright_way": fetch_pet_profile_wrightway,
 }

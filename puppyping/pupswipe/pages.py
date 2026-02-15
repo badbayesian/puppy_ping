@@ -1136,8 +1136,8 @@ def _render_likes_page(
                 " ".join(str(pup.get("species") or "pet").split()).strip().lower() or "pet"
             )
             share_body = (
-                f"I found a cute {share_animal_raw} on PupSwipe! "
-                f"Provider page: {raw_profile_url}"
+                f"I found a cute {share_animal_raw} on PupSwipe. "
+                f"Adoption site: {raw_profile_url}"
             )
             mailto_query = urlencode(
                 {
@@ -1207,7 +1207,7 @@ def _render_likes_page(
               const title = (btn.dataset.shareTitle || "Pet profile").trim();
               const shareText = (
                 btn.dataset.shareText ||
-                `I found a cute pet on PupSwipe! Provider page: ${url}`
+                `I found a cute pet on PupSwipe. Adoption site: ${url}`
               ).trim();
               if (!url) {
                 return;
@@ -1232,7 +1232,7 @@ def _render_likes_page(
               } catch {
                 // fall through to prompt
               }
-              window.prompt("Copy and paste this message", shareText);
+              window.prompt("Copy this share message", shareText);
             });
           });
         })();

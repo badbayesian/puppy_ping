@@ -38,6 +38,11 @@ def test_run_no_email_stores_profiles_and_status(monkeypatch):
         lambda source, url: profile,
     )
     monkeypatch.setattr(server, "tqdm", lambda items, desc=None: items)
+    monkeypatch.setattr(
+        server,
+        "_load_scraped_profiles_for_source_today",
+        lambda source: [],
+    )
 
     status_calls = []
     monkeypatch.setattr(
@@ -79,6 +84,7 @@ def test_run_continues_when_profile_fetch_raises(monkeypatch):
             "https://example.com/paws_chicago/missing",
         },
         "wright_way": {"https://example.com/wright_way/ok"},
+        "anti_cruelty": {"https://example.com/anti_cruelty/ok"},
     }
 
     monkeypatch.setattr(
@@ -94,6 +100,11 @@ def test_run_continues_when_profile_fetch_raises(monkeypatch):
 
     monkeypatch.setattr(server, "fetch_pet_profile", fake_fetch_profile)
     monkeypatch.setattr(server, "tqdm", lambda items, desc=None: items)
+    monkeypatch.setattr(
+        server,
+        "_load_scraped_profiles_for_source_today",
+        lambda source: [],
+    )
     monkeypatch.setattr(server, "store_pet_status", lambda *args, **kwargs: None)
 
     stored = {}
@@ -111,7 +122,7 @@ def test_run_continues_when_profile_fetch_raises(monkeypatch):
     server.logger = DummyLogger()
     server.run(send_ping=False, max_age=8.0, store_in_db=True)
 
-    assert stored["count"] == 2
+    assert stored["count"] == 3
 
 
 def test_run_sanitizes_email_recipients(monkeypatch):
@@ -214,6 +225,11 @@ def test_run_logs_remaining_animals_by_provider(monkeypatch):
     )
     monkeypatch.setattr(server, "fetch_pet_profile", lambda source, url: profile)
     monkeypatch.setattr(server, "tqdm", lambda items, desc=None: items)
+    monkeypatch.setattr(
+        server,
+        "_load_scraped_profiles_for_source_today",
+        lambda source: [],
+    )
     monkeypatch.setattr(server, "store_pet_status", lambda *args, **kwargs: None)
     monkeypatch.setattr(server, "store_pet_profiles_in_db", lambda *args, **kwargs: None)
 
@@ -228,3 +244,96 @@ def test_run_logs_remaining_animals_by_provider(monkeypatch):
     assert any(
         "[wright_way] processed=1 remaining=1" in msg for msg in messages
     )
+
+
+def test_scrape_source_reuses_today_profiles_without_live_scrape(monkeypatch):
+    cached_profile = PetProfile(
+        dog_id=123,
+        url="https://example.com/paws/123",
+        species="dog",
+        age_months=6,
+        media=PetMedia(),
+    )
+    monkeypatch.setattr(
+        server,
+        "_load_scraped_profiles_for_source_today",
+        lambda source: [cached_profile],
+    )
+    monkeypatch.setattr(
+        server,
+        "fetch_adoptable_pet_profile_links",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("live links should not be fetched")
+        ),
+    )
+
+    source, links, profiles, failed = server._scrape_source(
+        "paws_chicago", store_in_db=True, force=False
+    )
+
+    assert source == "paws_chicago"
+    assert links == {"https://example.com/paws/123"}
+    assert profiles == [cached_profile]
+    assert failed == 0
+
+
+def test_scrape_source_force_ignores_today_profiles(monkeypatch):
+    cached_profile = PetProfile(
+        dog_id=124,
+        url="https://example.com/paws/124",
+        species="dog",
+        age_months=7,
+        media=PetMedia(),
+    )
+    live_profile = PetProfile(
+        dog_id=125,
+        url="https://example.com/paws/125",
+        species="dog",
+        age_months=5,
+        media=PetMedia(),
+    )
+    monkeypatch.setattr(
+        server,
+        "_load_scraped_profiles_for_source_today",
+        lambda source: [cached_profile],
+    )
+    monkeypatch.setattr(
+        server,
+        "fetch_adoptable_pet_profile_links",
+        lambda source, store_in_db: {"https://example.com/paws/125"},
+    )
+    monkeypatch.setattr(
+        server,
+        "fetch_pet_profile",
+        lambda source, url: live_profile,
+    )
+    monkeypatch.setattr(server, "tqdm", lambda items, desc=None: items)
+
+    source, links, profiles, failed = server._scrape_source(
+        "paws_chicago", store_in_db=True, force=True
+    )
+
+    assert source == "paws_chicago"
+    assert links == {"https://example.com/paws/125"}
+    assert profiles == [live_profile]
+    assert failed == 0
+
+
+def test_run_passes_force_flag_to_source_scrape(monkeypatch):
+    captured = []
+    monkeypatch.setattr(server, "SOURCES", ("paws_chicago",))
+    monkeypatch.setattr(
+        server,
+        "_scrape_source",
+        lambda source, store_in_db, force=False: (
+            captured.append((source, store_in_db, force))
+            or (source, set(), [], 0)
+        ),
+    )
+    monkeypatch.setattr(server, "store_pet_status", lambda *args, **kwargs: None)
+    monkeypatch.setattr(server, "store_pet_profiles_in_db", lambda *args, **kwargs: None)
+
+    server.logger = DummyLogger()
+    server.run(send_ping=False, store_in_db=False, force=True)
+
+    assert captured == [("paws_chicago", False, True)]

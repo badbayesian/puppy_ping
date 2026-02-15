@@ -65,7 +65,11 @@ class DummyConn:
 
 def test_get_pupswipe_sources_default(monkeypatch):
     monkeypatch.delenv("PUPSWIPE_SOURCES", raising=False)
-    assert pupswipe._get_pupswipe_sources() == ("paws_chicago", "wright_way")
+    assert pupswipe._get_pupswipe_sources() == (
+        "paws_chicago",
+        "wright_way",
+        "anti_cruelty",
+    )
 
 
 def test_get_pupswipe_sources_env_override(monkeypatch):
@@ -616,7 +620,7 @@ def test_render_likes_page_has_share_actions():
     assert 'class="btn subtle share-btn"' in html
     assert 'data-share-url="https://example.com/pets/7"' in html
     assert (
-        'data-share-text="I found a cute dog on PupSwipe! Provider page: '
+        'data-share-text="I found a cute dog on PupSwipe. Adoption site: '
         'https://example.com/pets/7"'
     ) in html
     assert "Copy Share" in html
