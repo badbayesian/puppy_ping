@@ -8,6 +8,9 @@
 
   let submitTimer = null;
   let isSubmitting = false;
+  const DEFAULT_TEXT_DELAY_MS = 350;
+  const DEFAULT_NUMBER_DELAY_MS = 900;
+  const CHANGE_DELAY_MS = 140;
 
   function submitFilters() {
     if (isSubmitting) {
@@ -21,9 +24,20 @@
     filterForm.submit();
   }
 
-  function scheduleSubmit() {
+  function scheduleSubmit(delayMs = DEFAULT_TEXT_DELAY_MS) {
     window.clearTimeout(submitTimer);
-    submitTimer = window.setTimeout(submitFilters, 350);
+    submitTimer = window.setTimeout(submitFilters, delayMs);
+  }
+
+  function resolveInputDelay(input) {
+    const configuredDelay = Number(input?.dataset?.autoSubmitDelayMs || "");
+    if (Number.isFinite(configuredDelay) && configuredDelay > 0) {
+      return configuredDelay;
+    }
+    if (input?.type === "number") {
+      return DEFAULT_NUMBER_DELAY_MS;
+    }
+    return DEFAULT_TEXT_DELAY_MS;
   }
 
   const textInputs = filterForm.querySelectorAll(
@@ -32,8 +46,12 @@
   const selects = filterForm.querySelectorAll("select");
 
   textInputs.forEach((input) => {
-    input.addEventListener("input", scheduleSubmit);
-    input.addEventListener("change", scheduleSubmit);
+    input.addEventListener("input", () => {
+      scheduleSubmit(resolveInputDelay(input));
+    });
+    input.addEventListener("change", () => {
+      scheduleSubmit(CHANGE_DELAY_MS);
+    });
   });
 
   selects.forEach((select) => {

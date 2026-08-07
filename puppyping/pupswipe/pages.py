@@ -1,8 +1,35 @@
 """HTML rendering helpers for PupSwipe."""
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 from html import escape
+from typing import Callable
 from urllib.parse import urlencode
+
+
+@dataclass(frozen=True)
+class PageDeps:
+    normalize_breed_filter: Callable[[str | None], str]
+    normalize_name_filter: Callable[[str | None], str]
+    normalize_provider_filter: Callable[[str | None], str]
+    normalize_species_filter: Callable[[str | None], str]
+    normalize_max_age_filter: Callable[[object], float]
+    filter_hidden_inputs: Callable[..., str]
+    count_puppies: Callable[..., int]
+    count_unseen_puppies: Callable[..., int]
+    count_passed_puppies: Callable[..., int]
+    fetch_puppies: Callable[..., list[dict]]
+    provider_name: Callable[[str | None, str | None], str]
+    safe_int: Callable[[str | None, int], int]
+    normalize_next_path: Callable[[str | None, str], str]
+    pupswipe_sources: tuple[str, ...]
+    page_size: int
+    max_puppy_age_months: float
+    max_breed_filter_length: int
+    max_name_filter_length: int
+    password_min_length: int
+    provider_disclaimer: str
 
 
 def _get_primary_image(pup: dict) -> str | None:
@@ -82,6 +109,10 @@ def _render_page(
     viewer_user_id: int | None = None,
     viewer_user_key: str | None = None,
     review_passed: bool = False,
+    pinned_profile_url: str = "",
+    skip_profile_url: str = "",
+    *,
+    deps: PageDeps,
 ) -> bytes:
     """Render the main HTML page.
 
@@ -98,15 +129,38 @@ def _render_page(
         viewer_user_id: Optional signed-in user id for unseen tracking.
         viewer_user_key: Optional anonymous viewer key for unseen tracking.
         review_passed: Whether to review previously passed pets.
+        pinned_profile_url: Optional profile URL to keep the current card pinned.
+        skip_profile_url: Optional profile URL to exclude from random results.
 
     Returns:
         UTF-8 encoded HTML document bytes.
     """
+    _normalize_breed_filter = deps.normalize_breed_filter
+    _normalize_name_filter = deps.normalize_name_filter
+    _normalize_provider_filter = deps.normalize_provider_filter
+    _normalize_species_filter = deps.normalize_species_filter
+    _normalize_max_age_filter = deps.normalize_max_age_filter
+    _filter_hidden_inputs = deps.filter_hidden_inputs
+    _count_puppies = deps.count_puppies
+    _count_unseen_puppies = deps.count_unseen_puppies
+    _count_passed_puppies = deps.count_passed_puppies
+    _fetch_puppies = deps.fetch_puppies
+    _provider_name = deps.provider_name
+    _safe_int = deps.safe_int
+    PUPSWIPE_SOURCES = deps.pupswipe_sources
+    PAGE_SIZE = deps.page_size
+    MAX_PUPPY_AGE_MONTHS = deps.max_puppy_age_months
+    MAX_BREED_FILTER_LENGTH = deps.max_breed_filter_length
+    MAX_NAME_FILTER_LENGTH = deps.max_name_filter_length
+    PROVIDER_DISCLAIMER = deps.provider_disclaimer
+
     normalized_breed = _normalize_breed_filter(breed_filter)
     normalized_name = _normalize_name_filter(name_filter)
     normalized_provider = _normalize_provider_filter(provider_filter)
     normalized_species = _normalize_species_filter(species_filter)
     normalized_max_age_months = _normalize_max_age_filter(max_age_months)
+    normalized_pinned_profile_url = " ".join((pinned_profile_url or "").split()).strip()
+    normalized_skip_profile_url = " ".join((skip_profile_url or "").split()).strip()
     escaped_breed = escape(normalized_breed)
     escaped_name = escape(normalized_name)
     escaped_max_age = escape(f"{normalized_max_age_months:g}")
@@ -123,6 +177,7 @@ def _render_page(
         account_actions_html = f"""
           <div class="account-actions">
             <span class="account-email">{escaped_signed_in_email}</span>
+            <a class="profile-link" href="/catalog">Catalog</a>
             <a class="profile-link" href="/likes">Liked pups</a>
             <a class="profile-link" href="/reset-password">Reset password</a>
             <form class="inline-form" method="post" action="/signout">
@@ -133,11 +188,12 @@ def _render_page(
         """
     else:
         signin_query = urlencode({"next": "/"})
-        account_actions_html = (
-            f'<a class="profile-link account-link" href="/signin?{signin_query}">'
-            "Sign in to save likes"
-            "</a>"
-        )
+        account_actions_html = f"""
+          <div class="account-actions">
+            <a class="profile-link" href="/catalog">Catalog</a>
+            <a class="profile-link account-link" href="/signin?{signin_query}">Sign in to save likes</a>
+          </div>
+        """
     onboarding_intro_html = """
       <section class="hero" aria-label="How PupSwipe works">
         <p class="hero-kicker">How It Works</p>
@@ -157,23 +213,17 @@ def _render_page(
             max_age_months=normalized_max_age_months,
         )
         if review_passed:
-            count_passed_fn = globals().get("_count_passed_puppies")
-            remaining = (
-                count_passed_fn(
-                    breed_filter=normalized_breed,
-                    name_filter=normalized_name,
-                    provider_filter=normalized_provider,
-                    species_filter=normalized_species,
-                    max_age_months=normalized_max_age_months,
-                    viewer_user_id=viewer_user_id,
-                    viewer_user_key=viewer_user_key,
-                )
-                if callable(count_passed_fn)
-                else 0
+            remaining = _count_passed_puppies(
+                breed_filter=normalized_breed,
+                name_filter=normalized_name,
+                provider_filter=normalized_provider,
+                species_filter=normalized_species,
+                max_age_months=normalized_max_age_months,
+                viewer_user_id=viewer_user_id,
+                viewer_user_key=viewer_user_key,
             )
         else:
-            count_unseen_fn = globals().get("_count_unseen_puppies", _count_puppies)
-            remaining = count_unseen_fn(
+            remaining = _count_unseen_puppies(
                 breed_filter=normalized_breed,
                 name_filter=normalized_name,
                 provider_filter=normalized_provider,
@@ -183,22 +233,25 @@ def _render_page(
                 viewer_user_key=viewer_user_key,
             )
         completed_cycle = (not review_passed) and total > 0 and remaining <= 0
-        puppies = (
-            _fetch_puppies(
-                PAGE_SIZE,
-                breed_filter=normalized_breed,
-                name_filter=normalized_name,
-                provider_filter=normalized_provider,
-                species_filter=normalized_species,
-                max_age_months=normalized_max_age_months,
-                viewer_user_id=viewer_user_id,
-                viewer_user_key=viewer_user_key,
-                randomize=randomize,
-                review_passed=review_passed,
-            )
-            if remaining > 0
-            else []
-        )
+        if remaining > 0:
+            fetch_kwargs = {
+                "breed_filter": normalized_breed,
+                "name_filter": normalized_name,
+                "provider_filter": normalized_provider,
+                "species_filter": normalized_species,
+                "max_age_months": normalized_max_age_months,
+                "viewer_user_id": viewer_user_id,
+                "viewer_user_key": viewer_user_key,
+                "randomize": randomize,
+                "review_passed": review_passed,
+            }
+            if normalized_pinned_profile_url:
+                fetch_kwargs["pinned_profile_url"] = normalized_pinned_profile_url
+            if randomize and normalized_skip_profile_url:
+                fetch_kwargs["excluded_profile_url"] = normalized_skip_profile_url
+            puppies = _fetch_puppies(PAGE_SIZE, **fetch_kwargs)
+        else:
+            puppies = []
     except Exception as exc:
         error_html = f"""<!doctype html>
 <html lang="en">
@@ -347,6 +400,7 @@ def _render_page(
               max="120"
               step="0.5"
               value="{escaped_max_age}"
+              data-auto-submit-delay-ms="1200"
               inputmode="decimal"
               onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()"
             />
@@ -370,7 +424,7 @@ def _render_page(
     <title>PupSwipe | PuppyPing</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
-  <body>
+  <body class="catalog-page">
     <div class="background">
       <div class="glow glow-a"></div>
       <div class="glow glow-b"></div>
@@ -522,6 +576,8 @@ def _render_page(
     raw_profile_url = str(pup.get("url") or "").strip()
     profile_url = escape(raw_profile_url or "#")
     source_key = str(pup.get("source")) if pup.get("source") is not None else None
+    swipe_source = " ".join((source_key or "").split()).strip()
+    escaped_swipe_source = escape(swipe_source)
     provider_name = escape(_provider_name(source_key, raw_profile_url))
     if raw_profile_url:
         provider_link_html = (
@@ -544,6 +600,11 @@ def _render_page(
     current_photo_index = photo_index % photo_count if photo_count > 0 else 0
 
     has_carousel = photo_count > 1
+    carousel_pin_url_html = (
+        f'<input type="hidden" name="pin_url" value="{escape(raw_profile_url)}" />'
+        if raw_profile_url
+        else ""
+    )
     carousel_controls = ""
     if has_carousel:
         prev_photo = (photo_index - 1) % photo_count
@@ -557,6 +618,7 @@ def _render_page(
             <div class="carousel-controls" aria-label="Photo carousel controls">
               <form method="get" action="/">
                 <input type="hidden" name="photo" value="{prev_photo}" />
+                {carousel_pin_url_html}
                 {filter_hidden_inputs}
                 <button class="carousel-btn" type="submit" aria-label="Previous photo">Prev</button>
               </form>
@@ -566,12 +628,18 @@ def _render_page(
               </div>
               <form method="get" action="/">
                 <input type="hidden" name="photo" value="{next_photo}" />
+                {carousel_pin_url_html}
                 {filter_hidden_inputs}
                 <button class="carousel-btn" type="submit" aria-label="Next photo">Next</button>
               </form>
             </div>
         """
     photo_container_class = "card-photo has-carousel" if has_carousel else "card-photo"
+    random_skip_url_html = (
+        f'<input type="hidden" name="skip_url" value="{escape(raw_profile_url)}" />'
+        if raw_profile_url
+        else ""
+    )
 
     info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
     page_html = f"""<!doctype html>
@@ -647,18 +715,21 @@ def _render_page(
           <form id="swipe-nope-form" method="post" action="/swipe">
             <input type="hidden" name="dog_id" value="{dog_id}" />
             <input type="hidden" name="species" value="{species}" />
+            <input type="hidden" name="source" value="{escaped_swipe_source}" />
             {filter_hidden_inputs}
             <input type="hidden" name="swipe" value="left" />
             <button class="btn nope" type="submit">Pass</button>
           </form>
           <form method="get" action="/">
             <input type="hidden" name="random" value="1" />
+            {random_skip_url_html}
             {filter_hidden_inputs}
             <button class="btn refresh" type="submit">Random</button>
           </form>
           <form id="swipe-like-form" method="post" action="/swipe">
             <input type="hidden" name="dog_id" value="{dog_id}" />
             <input type="hidden" name="species" value="{species}" />
+            <input type="hidden" name="source" value="{escaped_swipe_source}" />
             {filter_hidden_inputs}
             <input type="hidden" name="swipe" value="right" />
             <button class="btn like" type="submit">Like</button>
@@ -702,13 +773,343 @@ def _render_page(
     return page_html.encode("utf-8")
 
 
+def _render_catalog_page(
+    puppies: list[dict],
+    total_available: int,
+    message: str | None = None,
+    breed_filter: str = "",
+    name_filter: str = "",
+    provider_filter: str = "",
+    species_filter: str = "",
+    max_age_months: float = 8.0,
+    signed_in_email: str | None = None,
+    *,
+    deps: PageDeps,
+) -> bytes:
+    """Render a catalog view of currently available pets."""
+    _normalize_breed_filter = deps.normalize_breed_filter
+    _normalize_name_filter = deps.normalize_name_filter
+    _normalize_provider_filter = deps.normalize_provider_filter
+    _normalize_species_filter = deps.normalize_species_filter
+    _normalize_max_age_filter = deps.normalize_max_age_filter
+    _filter_hidden_inputs = deps.filter_hidden_inputs
+    _provider_name = deps.provider_name
+    _safe_int = deps.safe_int
+    PUPSWIPE_SOURCES = deps.pupswipe_sources
+    MAX_PUPPY_AGE_MONTHS = deps.max_puppy_age_months
+    MAX_BREED_FILTER_LENGTH = deps.max_breed_filter_length
+    MAX_NAME_FILTER_LENGTH = deps.max_name_filter_length
+
+    normalized_breed = _normalize_breed_filter(breed_filter)
+    normalized_name = _normalize_name_filter(name_filter)
+    normalized_provider = _normalize_provider_filter(provider_filter)
+    normalized_species = _normalize_species_filter(species_filter)
+    normalized_max_age_months = _normalize_max_age_filter(max_age_months)
+    escaped_breed = escape(normalized_breed)
+    escaped_name = escape(normalized_name)
+    escaped_max_age = escape(f"{normalized_max_age_months:g}")
+    catalog_filter_hash_inputs_html = _filter_hidden_inputs(
+        breed_filter=normalized_breed,
+        name_filter=normalized_name,
+        provider_filter=normalized_provider,
+        species_filter=normalized_species,
+        max_age_months=normalized_max_age_months,
+    )
+    catalog_filter_hidden_inputs: list[str] = []
+    if normalized_name:
+        catalog_filter_hidden_inputs.append(
+            f'<input type="hidden" name="name" value="{escape(normalized_name)}" />'
+        )
+    if normalized_breed:
+        catalog_filter_hidden_inputs.append(
+            f'<input type="hidden" name="breed" value="{escape(normalized_breed)}" />'
+        )
+    if normalized_species:
+        catalog_filter_hidden_inputs.append(
+            f'<input type="hidden" name="species" value="{escape(normalized_species)}" />'
+        )
+    if normalized_provider:
+        catalog_filter_hidden_inputs.append(
+            f'<input type="hidden" name="provider" value="{escape(normalized_provider)}" />'
+        )
+    if normalized_max_age_months != MAX_PUPPY_AGE_MONTHS:
+        catalog_filter_hidden_inputs.append(
+            f'<input type="hidden" name="max_age" value="{escape(f"{normalized_max_age_months:g}")}" />'
+        )
+    catalog_filter_hidden_inputs_html = "\n                ".join(catalog_filter_hidden_inputs)
+    escaped_signed_in_email = escape(signed_in_email) if signed_in_email else ""
+
+    if signed_in_email:
+        account_actions_html = f"""
+          <div class="account-actions">
+            <span class="account-email">{escaped_signed_in_email}</span>
+            <a class="profile-link" href="/likes">Liked pups</a>
+            <a class="profile-link" href="/reset-password">Reset password</a>
+            <form class="inline-form" method="post" action="/signout">
+              <input type="hidden" name="next" value="/catalog" />
+              <button class="btn subtle" type="submit">Sign out</button>
+            </form>
+          </div>
+        """
+    else:
+        signin_query = urlencode({"next": "/catalog"})
+        account_actions_html = (
+            f'<a class="profile-link account-link" href="/signin?{signin_query}">'
+            "Sign in to save likes"
+            "</a>"
+        )
+
+    active_filters = any(
+        (
+            normalized_breed,
+            normalized_name,
+            normalized_provider,
+            normalized_species,
+            normalized_max_age_months != MAX_PUPPY_AGE_MONTHS,
+        )
+    )
+    shown_count = len(puppies)
+    stats = (
+        f"{shown_count} shown of {total_available} available"
+        if active_filters
+        else f"{total_available} available"
+    )
+
+    clear_filter_html = ""
+    if active_filters:
+        clear_query = urlencode({"clear_filters": "1"})
+        clear_filter_html = f'<a class="clear-filter" href="/catalog?{clear_query}">Clear</a>'
+
+    provider_options = ['<option value="">All providers</option>']
+    for source in PUPSWIPE_SOURCES:
+        selected_attr = " selected" if source == normalized_provider else ""
+        provider_options.append(
+            f'<option value="{escape(source)}"{selected_attr}>{escape(_provider_name(source))}</option>'
+        )
+    provider_options_html = "".join(provider_options)
+
+    species_option_values = ["", "dog", "cat", "rabbit", "bird", "other"]
+    if normalized_species and normalized_species not in species_option_values:
+        species_option_values.append(normalized_species)
+    species_options_html = "".join(
+        (
+            f'<option value="{escape(value)}"'
+            f'{" selected" if value == normalized_species else ""}>'
+            f'{escape("All species" if value == "" else value.title())}</option>'
+        )
+        for value in species_option_values
+    )
+
+    filter_bar = f"""
+      <section class="filter-strip" aria-label="Catalog filters">
+        <form
+          id="catalog-filter-form"
+          class="breed-filter-form"
+          method="get"
+          action="/catalog"
+          data-auto-filter="1"
+        >
+          <div class="filter-field">
+            <label for="catalog-breed-filter">Breed</label>
+            <input
+              id="catalog-breed-filter"
+              name="breed"
+              type="text"
+              value="{escaped_breed}"
+              placeholder="e.g. Labrador"
+              maxlength="{MAX_BREED_FILTER_LENGTH}"
+              onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()"
+            />
+          </div>
+          <div class="filter-field">
+            <label for="catalog-name-filter">Name</label>
+            <input
+              id="catalog-name-filter"
+              name="name"
+              type="text"
+              value="{escaped_name}"
+              placeholder="e.g. Nova"
+              maxlength="{MAX_NAME_FILTER_LENGTH}"
+              onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()"
+            />
+          </div>
+          <div class="filter-field">
+            <label for="catalog-species-filter">Species</label>
+            <select
+              id="catalog-species-filter"
+              name="species"
+              onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()"
+            >
+              {species_options_html}
+            </select>
+          </div>
+          <div class="filter-field">
+            <label for="catalog-provider-filter">Provider</label>
+            <select
+              id="catalog-provider-filter"
+              name="provider"
+              onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()"
+            >
+              {provider_options_html}
+            </select>
+          </div>
+          <div class="filter-field">
+            <label for="catalog-max-age-filter">Max age (months)</label>
+            <input
+              id="catalog-max-age-filter"
+              name="max_age"
+              type="number"
+              min="0.5"
+              max="120"
+              step="0.5"
+              value="{escaped_max_age}"
+              data-auto-submit-delay-ms="1200"
+              inputmode="decimal"
+              onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()"
+            />
+          </div>
+          {clear_filter_html}
+        </form>
+      </section>
+    """
+
+    cards_html = ""
+    for pup in puppies:
+        pet_id = _safe_int(str(pup.get("pet_id") or pup.get("dog_id")), 0)
+        pet_name = escape(str(pup.get("name") or "Unnamed pet"))
+        pet_species = (
+            " ".join(str(pup.get("species") or "pet").split()).strip().lower() or "pet"
+        )
+        species_badge = escape(pet_species.title())
+        pet_breed = escape(str(pup.get("breed") or "Unknown breed"))
+        pet_age = escape(str(pup.get("age_raw") or "Age unknown"))
+        pet_location = escape(str(pup.get("location") or "Unknown location"))
+        pet_status = escape(str(pup.get("status") or "Status unknown"))
+        raw_profile_url = str(pup.get("url") or "").strip()
+        profile_url = escape(raw_profile_url or "#")
+        source_key = str(pup.get("source")) if pup.get("source") is not None else None
+        provider_name = escape(_provider_name(source_key, raw_profile_url))
+        swipe_source = " ".join((source_key or "").split()).strip()
+        scraped_at_copy = escape(_format_liked_time(pup.get("scraped_at_utc")))
+
+        photo_url = _get_primary_image(pup)
+        if photo_url:
+            image_html = (
+                f'<img src="{escape(photo_url)}" alt="{pet_name} photo" referrerpolicy="no-referrer" />'
+            )
+        else:
+            initials = "".join(part[0] for part in str(pet_name).split()[:2]).upper() or "PET"
+            image_html = f'<div class="photo-fallback">{escape(initials)}</div>'
+
+        if raw_profile_url:
+            link_html = (
+                f'<a class="profile-link" href="{profile_url}" target="_blank" rel="noopener">'
+                "Open adoption site</a>"
+            )
+        else:
+            link_html = f'<span class="provider-missing">{provider_name}</span>'
+
+        cards_html += f"""
+          <article class="liked-card catalog-card">
+            <div class="liked-photo">{image_html}</div>
+            <div class="liked-body">
+              <h3>{pet_name}</h3>
+              <p class="liked-meta">{species_badge} &middot; {pet_breed} &middot; {pet_age} &middot; {pet_location}</p>
+              <div class="badges">
+                <span class="badge">{pet_status}</span>
+                <span class="badge badge-provider">{provider_name}</span>
+              </div>
+              <p class="liked-time">Updated at {scraped_at_copy}</p>
+              <p class="liked-id">Pet ID: {pet_id}</p>
+              <div class="liked-actions">
+                {link_html}
+                <form class="inline-form" method="post" action="/catalog/like">
+                  <input type="hidden" name="pet_id" value="{pet_id}" />
+                  <input type="hidden" name="pet_species" value="{escape(pet_species)}" />
+                  <input type="hidden" name="source" value="{escape(swipe_source)}" />
+                  {catalog_filter_hidden_inputs_html}
+                  {catalog_filter_hash_inputs_html}
+                  <button class="btn like" type="submit">Like</button>
+                </form>
+              </div>
+            </div>
+          </article>
+        """
+
+    if not cards_html:
+        filtered_species_label = _filtered_species_label(normalized_species)
+        empty_copy = (
+            message
+            or (
+                f"No {filtered_species_label} match those filters. Try different filters."
+                if active_filters
+                else "No pets available right now."
+            )
+        )
+        cards_html = f"""
+          <div class="state state-empty">
+            {escape(empty_copy)}
+          </div>
+        """
+
+    info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message and cards_html else ""
+    page_html = f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pet Catalog | PupSwipe</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="background">
+      <div class="glow glow-a"></div>
+      <div class="glow glow-b"></div>
+      <div class="grid"></div>
+    </div>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">PS</div>
+          <div>
+            <h1>Pet Catalog</h1>
+            <p>Available pets across providers</p>
+          </div>
+        </div>
+        <div class="topbar-meta">
+          <div class="stats">{stats}</div>
+          <a class="profile-link top-profile-link" href="/">Back to PupSwipe</a>
+        </div>
+        {account_actions_html}
+      </header>
+      {info_msg}
+      <main>
+        {filter_bar}
+        <section class="likes-shell catalog-shell">
+          <div class="liked-grid catalog-grid">
+            {cards_html}
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="/swipe.js"></script>
+  </body>
+</html>"""
+    return page_html.encode("utf-8")
+
+
 def _render_signin_page(
     message: str | None = None,
     next_path: str = "/likes",
     email_value: str = "",
     signed_in_email: str | None = None,
+    *,
+    deps: PageDeps,
 ) -> bytes:
     """Render email sign-in page."""
+    _normalize_next_path = deps.normalize_next_path
+    PASSWORD_MIN_LENGTH = deps.password_min_length
+
     safe_next = _normalize_next_path(next_path, "/likes")
     escaped_email = escape(email_value)
     info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
@@ -856,8 +1257,12 @@ def _render_forgot_password_page(
 def _render_forgot_password_reset_page(
     token: str,
     message: str | None = None,
+    *,
+    deps: PageDeps,
 ) -> bytes:
     """Render reset-password-by-token page."""
+    PASSWORD_MIN_LENGTH = deps.password_min_length
+
     info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
     page_html = f"""<!doctype html>
 <html lang="en">
@@ -923,8 +1328,12 @@ def _render_forgot_password_reset_page(
 def _render_reset_password_page(
     signed_in_email: str,
     message: str | None = None,
+    *,
+    deps: PageDeps,
 ) -> bytes:
     """Render reset-password page for a signed-in user."""
+    PASSWORD_MIN_LENGTH = deps.password_min_length
+
     info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
     page_html = f"""<!doctype html>
 <html lang="en">
@@ -1023,8 +1432,20 @@ def _render_likes_page(
     species_filter: str = "",
     provider_filter: str = "",
     message: str | None = None,
+    *,
+    deps: PageDeps,
 ) -> bytes:
     """Render page showing the signed-in user's liked puppies."""
+    _normalize_breed_filter = deps.normalize_breed_filter
+    _normalize_name_filter = deps.normalize_name_filter
+    _normalize_provider_filter = deps.normalize_provider_filter
+    _normalize_species_filter = deps.normalize_species_filter
+    _provider_name = deps.provider_name
+    _safe_int = deps.safe_int
+    PUPSWIPE_SOURCES = deps.pupswipe_sources
+    MAX_BREED_FILTER_LENGTH = deps.max_breed_filter_length
+    MAX_NAME_FILTER_LENGTH = deps.max_name_filter_length
+
     normalized_name = _normalize_name_filter(name_filter)
     normalized_breed = _normalize_breed_filter(breed_filter)
     normalized_species = _normalize_species_filter(species_filter)
@@ -1366,6 +1787,3 @@ def _render_likes_page(
   </body>
 </html>"""
     return page_html.encode("utf-8")
-
-
-

@@ -107,6 +107,7 @@ def test_fetch_puppies_queries_multiple_sources(monkeypatch):
     assert puppies[0]["primary_image"] == "https://g.petango.com/photos/364/a.jpg"
     query, params = conn.cursor_obj.executed[-1]
     assert "pet_status.source = ANY(%s::text[])" in query
+    assert "SELECT DISTINCT ON (url)" in query
     assert "COALESCE(species, '') = %s" in query
     assert "COALESCE(breed, '') ILIKE %s ESCAPE '\\'" in query
     assert params[0] == ["paws_chicago", "wright_way"]
@@ -117,6 +118,78 @@ def test_fetch_puppies_queries_multiple_sources(monkeypatch):
     assert params[4] == ""
     assert params[6] == ""
     assert params[8] == ""
+
+
+def test_fetch_puppies_can_pin_current_profile_url(monkeypatch):
+    row = (
+        1,
+        "dog",
+        "https://example.com/dog/1",
+        "Paloma",
+        "Lab Mix",
+        "Female",
+        "3 months 1 day",
+        3.03,
+        None,
+        "Murphysboro, IL",
+        "Available",
+        {},
+        "A sweet lab mix puppy.",
+        {"images": ["https://g.petango.com/photos/364/a.jpg"]},
+        "2026-02-12T00:00:00+00:00",
+        "wright_way",
+    )
+    conn = DummyConn(rows=[row])
+    monkeypatch.setattr(pupswipe, "get_connection", lambda: conn)
+    monkeypatch.setattr(pupswipe, "_ensure_app_schema", lambda _conn: None)
+    monkeypatch.setattr(pupswipe, "PUPSWIPE_SOURCES", ("paws_chicago", "wright_way"))
+
+    puppies = pupswipe._fetch_puppies(
+        limit=1,
+        pinned_profile_url="https://example.com/dog/1",
+    )
+
+    assert len(puppies) == 1
+    query, params = conn.cursor_obj.executed[-1]
+    assert "AND active.url = %s" in query
+    assert params[-1] == "https://example.com/dog/1"
+
+
+def test_fetch_puppies_can_exclude_current_profile_url_for_random(monkeypatch):
+    row = (
+        2,
+        "dog",
+        "https://example.com/dog/2",
+        "Duke",
+        "Mix",
+        "Male",
+        "4 months",
+        4.0,
+        None,
+        "Chicago, IL",
+        "Available",
+        {},
+        "Friendly pup.",
+        {"images": ["https://example.com/duke.jpg"]},
+        "2026-02-12T00:00:00+00:00",
+        "paws_chicago",
+    )
+    conn = DummyConn(rows=[row])
+    monkeypatch.setattr(pupswipe, "get_connection", lambda: conn)
+    monkeypatch.setattr(pupswipe, "_ensure_app_schema", lambda _conn: None)
+    monkeypatch.setattr(pupswipe, "PUPSWIPE_SOURCES", ("paws_chicago", "wright_way"))
+
+    puppies = pupswipe._fetch_puppies(
+        limit=1,
+        randomize=True,
+        excluded_profile_url="https://example.com/dog/1",
+    )
+
+    assert len(puppies) == 1
+    query, params = conn.cursor_obj.executed[-1]
+    assert "AND (%s = '' OR active.url <> %s)" in query
+    assert params[-3] == "https://example.com/dog/1"
+    assert params[-2] == "https://example.com/dog/1"
 
 
 def test_count_puppies_queries_multiple_sources(monkeypatch):
@@ -130,6 +203,7 @@ def test_count_puppies_queries_multiple_sources(monkeypatch):
     assert total == 7
     query, params = conn.cursor_obj.executed[-1]
     assert "pet_status.source = ANY(%s::text[])" in query
+    assert "SELECT DISTINCT ON (url)" in query
     assert "COALESCE(species, '') = %s" in query
     assert "COALESCE(breed, '') ILIKE %s ESCAPE '\\'" in query
     assert params[0] == ["paws_chicago", "wright_way"]
@@ -175,6 +249,7 @@ def test_render_page_has_uniform_card_structure_for_paws(monkeypatch):
     assert "Provider link" in html
     assert "View on PAWS Chicago" in html
     assert 'name="species" value="dog"' in html
+    assert 'name="source" value="paws_chicago"' in html
 
 
 def test_render_page_has_uniform_card_structure_for_wright_way(monkeypatch):
@@ -210,6 +285,7 @@ def test_render_page_has_uniform_card_structure_for_wright_way(monkeypatch):
     assert "Provider link" in html
     assert "View on Wright-Way Rescue" in html
     assert 'name="species" value="dog"' in html
+    assert 'name="source" value="wright_way"' in html
 
 
 def test_render_page_swipe_forms_include_cat_species(monkeypatch):
@@ -241,6 +317,64 @@ def test_render_page_swipe_forms_include_cat_species(monkeypatch):
 
     html = pupswipe._render_page().decode("utf-8")
     assert 'name="species" value="cat"' in html
+    assert 'name="source" value="paws_chicago"' in html
+
+
+def test_count_unseen_puppies_scopes_seen_swipes_by_source(monkeypatch):
+    conn = DummyConn(rows=[(3,)])
+    monkeypatch.setattr(pupswipe, "get_connection", lambda: conn)
+    monkeypatch.setattr(pupswipe, "_ensure_app_schema", lambda _conn: None)
+    monkeypatch.setattr(
+        pupswipe, "PUPSWIPE_SOURCES", ("paws_chicago", "wright_way", "anti_cruelty")
+    )
+
+    total = pupswipe._count_unseen_puppies(
+        viewer_user_key="abc123",
+        provider_filter="anti_cruelty",
+    )
+
+    assert total == 3
+    query, _params = conn.cursor_obj.executed[-1]
+    assert "COALESCE(seen.source, '') = COALESCE(active.source, '')" in query
+    assert "SELECT DISTINCT ON (url)" in query
+
+
+def test_fetch_puppies_review_passed_scopes_swipes_by_source(monkeypatch):
+    row = (
+        9,
+        "dog",
+        "https://example.com/anti/9",
+        "Saga",
+        "Shepherd",
+        "Male",
+        "2 years 5 months",
+        29.47,
+        55.0,
+        "Chicago, IL",
+        "Available",
+        {},
+        "Friendly dog",
+        {"images": ["https://example.com/saga.jpg"]},
+        "2026-02-15T00:00:00+00:00",
+        "anti_cruelty",
+    )
+    conn = DummyConn(rows=[row])
+    monkeypatch.setattr(pupswipe, "get_connection", lambda: conn)
+    monkeypatch.setattr(pupswipe, "_ensure_app_schema", lambda _conn: None)
+    monkeypatch.setattr(
+        pupswipe, "PUPSWIPE_SOURCES", ("paws_chicago", "wright_way", "anti_cruelty")
+    )
+
+    puppies = pupswipe._fetch_puppies(
+        limit=1,
+        viewer_user_key="anon",
+        review_passed=True,
+        provider_filter="anti_cruelty",
+    )
+
+    assert len(puppies) == 1
+    query, _params = conn.cursor_obj.executed[-1]
+    assert "viewer_last_swipes.source_key = COALESCE(active.source, '')" in query
 
 
 def test_render_page_shows_random_button(monkeypatch):
@@ -286,6 +420,8 @@ def test_render_page_shows_random_button(monkeypatch):
     assert 'id="max-age-filter"' in html
     assert 'name="max_age"' in html
     assert 'value="6.5"' in html
+    assert 'data-auto-submit-delay-ms="1200"' in html
+    assert 'name="skip_url" value="https://example.com/dog/3"' in html
     assert 'name="offset"' not in html
     assert 'id="auto-filter-form"' in html
     assert 'data-auto-filter="1"' in html
@@ -378,6 +514,112 @@ def test_render_page_randomize_fetches_unseen_with_random_order(monkeypatch):
     assert captured["max_age_months"] == 4.5
     assert captured["randomize"] is True
     assert captured["review_passed"] is False
+
+
+def test_render_page_carousel_pins_profile_url(monkeypatch):
+    monkeypatch.setattr(
+        pupswipe,
+        "_count_puppies",
+        lambda **_kwargs: 1,
+    )
+    monkeypatch.setattr(
+        pupswipe,
+        "_fetch_puppies",
+        lambda limit, **_kwargs: [
+            {
+                "dog_id": 404,
+                "url": "https://example.com/dog/404",
+                "name": "Daisy",
+                "breed": "Mix",
+                "gender": "Female",
+                "age_raw": "6 months",
+                "location": "Chicago, IL",
+                "status": "Available",
+                "description": "Photo carousel test.",
+                "media": {
+                    "images": [
+                        "https://example.com/404-1.jpg",
+                        "https://example.com/404-2.jpg",
+                    ]
+                },
+                "source": "paws_chicago",
+            }
+        ],
+    )
+
+    html = pupswipe._render_page().decode("utf-8")
+    assert html.count('name="pin_url" value="https://example.com/dog/404"') == 2
+
+
+def test_render_page_forwards_pinned_profile_url_to_fetch(monkeypatch):
+    monkeypatch.setattr(
+        pupswipe,
+        "_count_puppies",
+        lambda **_kwargs: 1,
+    )
+    captured: dict[str, str] = {}
+
+    def fake_fetch(limit, **kwargs):
+        captured["pinned_profile_url"] = str(kwargs.get("pinned_profile_url") or "")
+        return [
+            {
+                "dog_id": 91,
+                "url": "https://example.com/dog/91",
+                "name": "Milo",
+                "breed": "Mix",
+                "gender": "Male",
+                "age_raw": "5 months",
+                "location": "Chicago, IL",
+                "status": "Available",
+                "description": "Pinned profile test.",
+                "media": {"images": ["https://example.com/91.jpg"]},
+                "source": "wright_way",
+            }
+        ]
+
+    monkeypatch.setattr(pupswipe, "_fetch_puppies", fake_fetch)
+
+    pupswipe._render_page(pinned_profile_url="https://example.com/dog/91")
+    assert captured["pinned_profile_url"] == "https://example.com/dog/91"
+
+
+def test_render_page_random_forwards_skip_url_as_excluded_profile(monkeypatch):
+    monkeypatch.setattr(
+        pupswipe,
+        "_count_puppies",
+        lambda **_kwargs: 2,
+    )
+    monkeypatch.setattr(
+        pupswipe,
+        "_count_unseen_puppies",
+        lambda **_kwargs: 2,
+    )
+    captured: dict[str, str] = {}
+
+    def fake_fetch(limit, **kwargs):
+        captured["excluded_profile_url"] = str(kwargs.get("excluded_profile_url") or "")
+        return [
+            {
+                "dog_id": 11,
+                "url": "https://example.com/dog/11",
+                "name": "Poppy",
+                "breed": "Mix",
+                "gender": "Female",
+                "age_raw": "5 months",
+                "location": "Chicago, IL",
+                "status": "Available",
+                "description": "Random skip test.",
+                "media": {"images": ["https://example.com/d11.jpg"]},
+                "source": "paws_chicago",
+            }
+        ]
+
+    monkeypatch.setattr(pupswipe, "_fetch_puppies", fake_fetch)
+    pupswipe._render_page(
+        randomize=True,
+        skip_profile_url="https://example.com/dog/10",
+    )
+    assert captured["excluded_profile_url"] == "https://example.com/dog/10"
 
 
 def test_render_page_start_over_switches_to_passed_review_mode(monkeypatch):
@@ -564,15 +806,69 @@ def test_render_page_shows_auth_links_by_signin_state(monkeypatch):
 
     signed_out_html = pupswipe._render_page().decode("utf-8")
     assert "Sign in to save likes" in signed_out_html
+    assert 'href="/catalog"' in signed_out_html
     assert "/signin?next=%2F" in signed_out_html
 
-    signed_in_html = pupswipe._render_page(
-        signed_in_email="person@gmail.com"
-    ).decode("utf-8")
+    signed_in_html = pupswipe._render_page(signed_in_email="person@gmail.com").decode(
+        "utf-8"
+    )
     assert "person@gmail.com" in signed_in_html
+    assert 'href="/catalog"' in signed_in_html
     assert "Liked pups" in signed_in_html
     assert "Reset password" in signed_in_html
     assert "Sign out" in signed_in_html
+
+
+def test_render_catalog_page_shows_cards_and_filters():
+    html = pupswipe._render_catalog_page(
+        puppies=[
+            {
+                "pet_id": 501,
+                "species": "cat",
+                "url": "https://example.com/cat/501",
+                "name": "Mochi",
+                "breed": "Domestic Shorthair",
+                "age_raw": "10 months",
+                "location": "Chicago, IL",
+                "status": "Available",
+                "media": {"images": ["https://example.com/mochi.jpg"]},
+                "source": "paws_chicago",
+                "scraped_at_utc": "2026-02-15T12:00:00+00:00",
+            }
+        ],
+        total_available=12,
+        breed_filter="shorthair",
+        species_filter="cat",
+        max_age_months=12,
+        signed_in_email="me@example.com",
+    ).decode("utf-8")
+
+    assert "<h1>Pet Catalog</h1>" in html
+    assert "1 shown of 12 available" in html
+    assert 'id="catalog-filter-form"' in html
+    assert 'class="liked-grid catalog-grid"' in html
+    assert 'id="catalog-name-filter"' in html
+    assert 'id="catalog-breed-filter"' in html
+    assert 'id="catalog-species-filter"' in html
+    assert 'id="catalog-provider-filter"' in html
+    assert 'id="catalog-max-age-filter"' in html
+    assert 'data-auto-submit-delay-ms="1200"' in html
+    assert "Mochi" in html
+    assert "Open adoption site" in html
+    assert 'action="/catalog/like"' in html
+    assert 'name="pet_id" value="501"' in html
+    assert 'name="pet_species" value="cat"' in html
+    assert 'href="/catalog?clear_filters=1"' in html
+
+
+def test_render_catalog_page_empty_state_matches_species_filter():
+    html = pupswipe._render_catalog_page(
+        puppies=[],
+        total_available=0,
+        species_filter="cat",
+        name_filter="mochi",
+    ).decode("utf-8")
+    assert "No cats match those filters. Try different filters." in html
 
 
 def test_render_likes_page_shows_filters_and_filtered_stats():
@@ -682,7 +978,9 @@ def test_password_reset_error_validates_inputs():
     assert pupswipe._password_reset_error("", "newpassword", "newpassword")
     assert pupswipe._password_reset_error("old", "short", "short")
     assert pupswipe._password_reset_error("oldpassword", "newpassword", "different")
-    assert pupswipe._password_reset_error("samepassword", "samepassword", "samepassword")
+    assert pupswipe._password_reset_error(
+        "samepassword", "samepassword", "samepassword"
+    )
     assert (
         pupswipe._password_reset_error("oldpassword", "newpassword", "newpassword")
         is None
@@ -719,5 +1017,6 @@ def test_render_forgot_password_pages_have_expected_fields():
 
 def test_password_reset_token_hash_is_deterministic():
     token = "my-token"
-    assert pupswipe._password_reset_token_hash(token) == pupswipe._password_reset_token_hash(token)
-
+    assert pupswipe._password_reset_token_hash(
+        token
+    ) == pupswipe._password_reset_token_hash(token)

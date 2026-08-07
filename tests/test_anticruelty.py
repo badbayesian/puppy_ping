@@ -166,7 +166,10 @@ def test_fetch_pet_profile_anti_cruelty_parses_fields(monkeypatch):
     assert profile.location == "Dog Adopts, Run 10"
     assert profile.status == "Available"
     assert profile.description == "Very sweet and loves belly rubs."
-    assert profile.media.images == ["https://example.com/a.jpg", "https://example.com/b.jpg"]
+    assert profile.media.images == [
+        "https://example.com/a.jpg",
+        "https://example.com/b.jpg",
+    ]
     assert profile.media.videos == ["https://example.com/v.mp4"]
 
 

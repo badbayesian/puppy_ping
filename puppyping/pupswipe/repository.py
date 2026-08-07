@@ -9,22 +9,25 @@ from decimal import Decimal
 from typing import Callable
 
 from puppyping.db import ensure_schema, get_connection
+from puppyping.pupswipe.filters import (
+    normalize_breed_filter as shared_normalize_breed_filter,
+    normalize_max_age_filter as shared_normalize_max_age_filter,
+    normalize_name_filter as shared_normalize_name_filter,
+    normalize_provider_filter as shared_normalize_provider_filter,
+    normalize_species_filter as shared_normalize_species_filter,
+)
 from puppyping.pupswipe.auth import (
     hash_password,
     password_reset_token_hash,
     verify_password,
 )
 from puppyping.pupswipe.config import (
-    MAX_BREED_FILTER_LENGTH,
-    MAX_NAME_FILTER_LENGTH,
     MAX_PUPPY_AGE_MONTHS,
     PASSWORD_RESET_TOKEN_TTL_MINUTES,
     get_pupswipe_sources,
 )
 
 MAX_SPECIES_LENGTH = 40
-MIN_MAX_AGE_MONTHS = 0.5
-MAX_MAX_AGE_MONTHS = 120.0
 
 
 def ensure_app_schema(conn) -> None:
@@ -353,6 +356,12 @@ def ensure_app_schema(conn) -> None:
     conn.commit()
 
 
+def _ensure_bootstrapped(conn, ensure_schema_fn: Callable | None) -> None:
+    """Run schema bootstrap when a hook is supplied."""
+    if callable(ensure_schema_fn):
+        ensure_schema_fn(conn)
+
+
 def _coerce_json(value):
     if isinstance(value, Decimal):
         return float(value)
@@ -369,34 +378,34 @@ def _jsonify(obj):
     return _coerce_json(obj)
 
 
+def _rows_to_puppies(rows, columns) -> list[dict]:
+    """Convert query result rows to PupSwipe pet dictionaries."""
+    puppies: list[dict] = []
+    for row in rows:
+        record = _jsonify(dict(zip(columns, row)))
+        if "pet_id" in record and "dog_id" not in record:
+            record["dog_id"] = record["pet_id"]
+        media = record.get("media") or {}
+        images = media.get("images") or []
+        record["primary_image"] = images[0] if images else None
+        puppies.append(record)
+    return puppies
+
+
 def _normalize_breed_filter(value: str | None) -> str:
-    text = " ".join((value or "").split()).strip()
-    if not text:
-        return ""
-    return text[:MAX_BREED_FILTER_LENGTH]
+    return shared_normalize_breed_filter(value)
 
 
 def _normalize_name_filter(value: str | None) -> str:
-    text = " ".join((value or "").split()).strip()
-    if not text:
-        return ""
-    return text[:MAX_NAME_FILTER_LENGTH]
+    return shared_normalize_name_filter(value)
 
 
 def _normalize_provider_filter(value: str | None, sources: tuple[str, ...]) -> str:
-    candidate = (value or "").strip()
-    if not candidate:
-        return ""
-    if candidate in sources:
-        return candidate
-    return ""
+    return shared_normalize_provider_filter(value, sources)
 
 
 def _normalize_species_filter(value: str | None) -> str:
-    text = " ".join((value or "").split()).strip().lower()
-    if not text:
-        return ""
-    return text[:MAX_SPECIES_LENGTH]
+    return shared_normalize_species_filter(value)
 
 
 def _normalize_species(value: str | None, default: str = "dog") -> str:
@@ -409,11 +418,7 @@ def _normalize_species(value: str | None, default: str = "dog") -> str:
 
 def _normalize_max_age_months(value, default: float = MAX_PUPPY_AGE_MONTHS) -> float:
     """Normalize max-age filter to a bounded positive float in months."""
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        parsed = float(default)
-    return max(MIN_MAX_AGE_MONTHS, min(MAX_MAX_AGE_MONTHS, parsed))
+    return shared_normalize_max_age_filter(value, default)
 
 
 def _text_like_pattern(value: str) -> str:
@@ -452,11 +457,13 @@ def fetch_puppies(
     *,
     sources: tuple[str, ...] | None = None,
     connection_factory: Callable = get_connection,
-    ensure_schema_fn: Callable = ensure_app_schema,
+    ensure_schema_fn: Callable | None = ensure_app_schema,
     viewer_user_id: int | None = None,
     viewer_user_key: str | None = None,
     randomize: bool = False,
     review_passed: bool = False,
+    pinned_profile_url: str | None = None,
+    excluded_profile_url: str | None = None,
 ) -> list[dict]:
     """Load the latest available dog profiles ordered by recency."""
     active_sources = tuple(sources or get_pupswipe_sources())
@@ -465,6 +472,8 @@ def fetch_puppies(
     normalized_provider = _normalize_provider_filter(provider_filter, active_sources)
     normalized_species = _normalize_species_filter(species_filter)
     normalized_max_age_months = _normalize_max_age_months(max_age_months)
+    normalized_pinned_profile_url = " ".join((pinned_profile_url or "").split()).strip()
+    normalized_excluded_profile_url = " ".join((excluded_profile_url or "").split()).strip()
     normalized_user_id, normalized_user_key = _normalize_viewer_context(
         viewer_user_id=viewer_user_id,
         viewer_user_key=viewer_user_key,
@@ -479,16 +488,17 @@ def fetch_puppies(
             return []
         viewer_cte_sql = """
                 , viewer_last_swipes AS (
-                    SELECT DISTINCT ON (pet_id, COALESCE(species, ''))
+                    SELECT DISTINCT ON (pet_id, COALESCE(species, ''), COALESCE(source, ''))
                         pet_id,
                         COALESCE(species, '') AS species_key,
+                        COALESCE(source, '') AS source_key,
                         swipe
                     FROM pet_swipes
                     WHERE (
                         (%s::BIGINT IS NOT NULL AND user_id = %s::BIGINT)
                         OR (%s::TEXT <> '' AND user_key = %s::TEXT)
                     )
-                    ORDER BY pet_id, COALESCE(species, ''), created_at_utc DESC, id DESC
+                    ORDER BY pet_id, COALESCE(species, ''), COALESCE(source, ''), created_at_utc DESC, id DESC
                 )
                 """
         viewer_cte_params = (
@@ -501,6 +511,7 @@ def fetch_puppies(
                 JOIN viewer_last_swipes
                   ON viewer_last_swipes.pet_id = active.pet_id
                  AND viewer_last_swipes.species_key = COALESCE(active.species, '')
+                 AND viewer_last_swipes.source_key = COALESCE(active.source, '')
                  AND viewer_last_swipes.swipe = 'left'
                 """
     elif normalized_user_id is not None or normalized_user_key:
@@ -510,6 +521,7 @@ def fetch_puppies(
                     FROM pet_swipes AS seen
                     WHERE seen.pet_id = active.pet_id
                       AND COALESCE(seen.species, '') = COALESCE(active.species, '')
+                      AND COALESCE(seen.source, '') = COALESCE(active.source, '')
                       AND (
                         (%s::BIGINT IS NOT NULL AND seen.user_id = %s::BIGINT)
                         OR (%s::TEXT <> '' AND seen.user_key = %s::TEXT)
@@ -528,12 +540,76 @@ def fetch_puppies(
         else "ORDER BY scraped_at_utc DESC, pet_id DESC, species ASC"
     )
     with connection_factory() as conn:
-        ensure_schema_fn(conn)
+        _ensure_bootstrapped(conn, ensure_schema_fn)
         with conn.cursor() as cur:
+            if normalized_pinned_profile_url:
+                cur.execute(
+                    """
+                    WITH latest AS (
+                        SELECT DISTINCT ON (url)
+                            pet_id,
+                            species,
+                            url,
+                            name,
+                            breed,
+                            gender,
+                            age_raw,
+                            age_months,
+                            weight_lbs,
+                            location,
+                            status,
+                            ratings,
+                            description,
+                            media,
+                            scraped_at_utc
+                        FROM pet_profiles
+                        ORDER BY url, scraped_at_utc DESC
+                    ), active AS (
+                        SELECT
+                            latest.*,
+                            pet_status.source
+                        FROM latest
+                        JOIN pet_status
+                          ON pet_status.link = latest.url
+                         AND pet_status.is_active = true
+                         AND pet_status.source = ANY(%s::text[])
+                    )
+                    SELECT active.*
+                    FROM active
+                    WHERE COALESCE(status, '') ILIKE 'Available%%'
+                      AND age_months IS NOT NULL
+                      AND age_months < %s
+                      AND (%s = '' OR source = %s)
+                      AND (%s = '' OR COALESCE(species, '') = %s)
+                      AND (%s = '' OR COALESCE(breed, '') ILIKE %s ESCAPE '\\')
+                      AND (%s = '' OR COALESCE(name, '') ILIKE %s ESCAPE '\\')
+                      AND active.url = %s
+                    ORDER BY scraped_at_utc DESC, pet_id DESC, species ASC
+                    LIMIT 1;
+                    """,
+                    (
+                        list(active_sources),
+                        normalized_max_age_months,
+                        normalized_provider,
+                        normalized_provider,
+                        normalized_species,
+                        normalized_species,
+                        normalized_breed,
+                        _text_like_pattern(normalized_breed),
+                        normalized_name,
+                        _text_like_pattern(normalized_name),
+                        normalized_pinned_profile_url,
+                    ),
+                )
+                pinned_rows = cur.fetchall()
+                if pinned_rows:
+                    pinned_columns = [col.name for col in cur.description]
+                    return _rows_to_puppies(pinned_rows, pinned_columns)
+
             cur.execute(
                 f"""
                 WITH latest AS (
-                    SELECT DISTINCT ON (pet_id, species)
+                    SELECT DISTINCT ON (url)
                         pet_id,
                         species,
                         url,
@@ -550,7 +626,7 @@ def fetch_puppies(
                         media,
                         scraped_at_utc
                     FROM pet_profiles
-                    ORDER BY pet_id, species, scraped_at_utc DESC
+                    ORDER BY url, scraped_at_utc DESC
                 ), active AS (
                     SELECT
                         latest.*,
@@ -572,6 +648,7 @@ def fetch_puppies(
                   AND (%s = '' OR COALESCE(species, '') = %s)
                   AND (%s = '' OR COALESCE(breed, '') ILIKE %s ESCAPE '\\')
                   AND (%s = '' OR COALESCE(name, '') ILIKE %s ESCAPE '\\')
+                  AND (%s = '' OR active.url <> %s)
                 {seen_filter_sql}
                 {order_by_sql}
                 LIMIT %s
@@ -589,23 +666,15 @@ def fetch_puppies(
                     _text_like_pattern(normalized_breed),
                     normalized_name,
                     _text_like_pattern(normalized_name),
+                    normalized_excluded_profile_url,
+                    normalized_excluded_profile_url,
                     *seen_filter_params,
                     limit,
                 ),
             )
             rows = cur.fetchall()
             columns = [col.name for col in cur.description]
-
-    puppies: list[dict] = []
-    for row in rows:
-        record = _jsonify(dict(zip(columns, row)))
-        if "pet_id" in record and "dog_id" not in record:
-            record["dog_id"] = record["pet_id"]
-        media = record.get("media") or {}
-        images = media.get("images") or []
-        record["primary_image"] = images[0] if images else None
-        puppies.append(record)
-    return puppies
+    return _rows_to_puppies(rows, columns)
 
 
 def count_puppies(
@@ -617,7 +686,7 @@ def count_puppies(
     *,
     sources: tuple[str, ...] | None = None,
     connection_factory: Callable = get_connection,
-    ensure_schema_fn: Callable = ensure_app_schema,
+    ensure_schema_fn: Callable | None = ensure_app_schema,
 ) -> int:
     """Count latest dog profiles that are currently available."""
     active_sources = tuple(sources or get_pupswipe_sources())
@@ -627,12 +696,12 @@ def count_puppies(
     normalized_species = _normalize_species_filter(species_filter)
     normalized_max_age_months = _normalize_max_age_months(max_age_months)
     with connection_factory() as conn:
-        ensure_schema_fn(conn)
+        _ensure_bootstrapped(conn, ensure_schema_fn)
         with conn.cursor() as cur:
             cur.execute(
                 """
                 WITH latest AS (
-                    SELECT DISTINCT ON (pet_id, species)
+                    SELECT DISTINCT ON (url)
                         pet_id,
                         species,
                         url,
@@ -642,7 +711,7 @@ def count_puppies(
                         status,
                         scraped_at_utc
                     FROM pet_profiles
-                    ORDER BY pet_id, species, scraped_at_utc DESC
+                    ORDER BY url, scraped_at_utc DESC
                 )
                 SELECT count(*)
                 FROM latest
@@ -689,7 +758,7 @@ def count_unseen_puppies(
     viewer_user_key: str | None = None,
     sources: tuple[str, ...] | None = None,
     connection_factory: Callable = get_connection,
-    ensure_schema_fn: Callable = ensure_app_schema,
+    ensure_schema_fn: Callable | None = ensure_app_schema,
 ) -> int:
     """Count available profiles not yet swiped by this viewer context."""
     normalized_user_id, normalized_user_key = _normalize_viewer_context(
@@ -715,12 +784,12 @@ def count_unseen_puppies(
     normalized_species = _normalize_species_filter(species_filter)
     normalized_max_age_months = _normalize_max_age_months(max_age_months)
     with connection_factory() as conn:
-        ensure_schema_fn(conn)
+        _ensure_bootstrapped(conn, ensure_schema_fn)
         with conn.cursor() as cur:
             cur.execute(
                 """
                 WITH latest AS (
-                    SELECT DISTINCT ON (pet_id, species)
+                    SELECT DISTINCT ON (url)
                         pet_id,
                         species,
                         url,
@@ -730,18 +799,21 @@ def count_unseen_puppies(
                         status,
                         scraped_at_utc
                     FROM pet_profiles
-                    ORDER BY pet_id, species, scraped_at_utc DESC
+                    ORDER BY url, scraped_at_utc DESC
+                ), active AS (
+                    SELECT
+                        latest.*,
+                        pet_status.source
+                    FROM latest
+                    JOIN pet_status
+                      ON pet_status.link = latest.url
+                     AND pet_status.source = ANY(%s::text[])
+                     AND (%s = '' OR pet_status.source = %s)
+                     AND pet_status.is_active = true
                 )
                 SELECT count(*)
-                FROM latest
-                WHERE EXISTS (
-                    SELECT 1
-                    FROM pet_status
-                    WHERE pet_status.link = latest.url
-                      AND pet_status.source = ANY(%s::text[])
-                      AND (%s = '' OR pet_status.source = %s)
-                      AND pet_status.is_active = true
-                )
+                FROM active
+                WHERE true
                   AND COALESCE(status, '') ILIKE 'Available%%'
                   AND age_months IS NOT NULL
                   AND age_months < %s
@@ -751,8 +823,9 @@ def count_unseen_puppies(
                   AND NOT EXISTS (
                     SELECT 1
                     FROM pet_swipes AS seen
-                    WHERE seen.pet_id = latest.pet_id
-                      AND COALESCE(seen.species, '') = COALESCE(latest.species, '')
+                    WHERE seen.pet_id = active.pet_id
+                      AND COALESCE(seen.species, '') = COALESCE(active.species, '')
+                      AND COALESCE(seen.source, '') = COALESCE(active.source, '')
                       AND (
                         (%s::BIGINT IS NOT NULL AND seen.user_id = %s::BIGINT)
                         OR (%s::TEXT <> '' AND seen.user_key = %s::TEXT)
@@ -791,7 +864,7 @@ def count_passed_puppies(
     viewer_user_key: str | None = None,
     sources: tuple[str, ...] | None = None,
     connection_factory: Callable = get_connection,
-    ensure_schema_fn: Callable = ensure_app_schema,
+    ensure_schema_fn: Callable | None = ensure_app_schema,
 ) -> int:
     """Count available profiles whose latest swipe for this viewer is a pass."""
     normalized_user_id, normalized_user_key = _normalize_viewer_context(
@@ -808,12 +881,12 @@ def count_passed_puppies(
     normalized_species = _normalize_species_filter(species_filter)
     normalized_max_age_months = _normalize_max_age_months(max_age_months)
     with connection_factory() as conn:
-        ensure_schema_fn(conn)
+        _ensure_bootstrapped(conn, ensure_schema_fn)
         with conn.cursor() as cur:
             cur.execute(
                 """
                 WITH latest AS (
-                    SELECT DISTINCT ON (pet_id, species)
+                    SELECT DISTINCT ON (url)
                         pet_id,
                         species,
                         url,
@@ -823,36 +896,36 @@ def count_passed_puppies(
                         status,
                         scraped_at_utc
                     FROM pet_profiles
-                    ORDER BY pet_id, species, scraped_at_utc DESC
+                    ORDER BY url, scraped_at_utc DESC
                 ), active AS (
                     SELECT
-                        latest.*
+                        latest.*,
+                        pet_status.source
                     FROM latest
-                    WHERE EXISTS (
-                        SELECT 1
-                        FROM pet_status
-                        WHERE pet_status.link = latest.url
-                          AND pet_status.source = ANY(%s::text[])
-                          AND (%s = '' OR pet_status.source = %s)
-                          AND pet_status.is_active = true
-                    )
+                    JOIN pet_status
+                      ON pet_status.link = latest.url
+                     AND pet_status.source = ANY(%s::text[])
+                     AND (%s = '' OR pet_status.source = %s)
+                     AND pet_status.is_active = true
                 ), viewer_last_swipes AS (
-                    SELECT DISTINCT ON (pet_id, COALESCE(species, ''))
+                    SELECT DISTINCT ON (pet_id, COALESCE(species, ''), COALESCE(source, ''))
                         pet_id,
                         COALESCE(species, '') AS species_key,
+                        COALESCE(source, '') AS source_key,
                         swipe
                     FROM pet_swipes
                     WHERE (
                         (%s::BIGINT IS NOT NULL AND user_id = %s::BIGINT)
                         OR (%s::TEXT <> '' AND user_key = %s::TEXT)
                     )
-                    ORDER BY pet_id, COALESCE(species, ''), created_at_utc DESC, id DESC
+                    ORDER BY pet_id, COALESCE(species, ''), COALESCE(source, ''), created_at_utc DESC, id DESC
                 )
                 SELECT count(*)
                 FROM active
                 JOIN viewer_last_swipes
                   ON viewer_last_swipes.pet_id = active.pet_id
                  AND viewer_last_swipes.species_key = COALESCE(active.species, '')
+                 AND viewer_last_swipes.source_key = COALESCE(active.source, '')
                  AND viewer_last_swipes.swipe = 'left'
                 WHERE COALESCE(status, '') ILIKE 'Available%%'
                   AND age_months IS NOT NULL
@@ -895,13 +968,13 @@ def store_swipe(
     screen_info: dict | None = None,
     *,
     connection_factory: Callable = get_connection,
-    ensure_schema_fn: Callable = ensure_app_schema,
+    ensure_schema_fn: Callable | None = ensure_app_schema,
 ) -> None:
     """Persist a swipe event for a dog."""
     normalized_species = _normalize_species(species)
     pet_id = int(dog_id)
     with connection_factory() as conn:
-        ensure_schema_fn(conn)
+        _ensure_bootstrapped(conn, ensure_schema_fn)
         with conn.cursor() as cur:
             screen_info_json = json.dumps(screen_info, sort_keys=True) if screen_info else None
             cur.execute(
@@ -977,11 +1050,11 @@ def get_user_for_password_reset(
     email: str,
     *,
     connection_factory: Callable = get_connection,
-    ensure_schema_fn: Callable = ensure_app_schema,
+    ensure_schema_fn: Callable | None = ensure_app_schema,
 ) -> dict | None:
     """Load minimal user fields needed to issue a password reset."""
     with connection_factory() as conn:
-        ensure_schema_fn(conn)
+        _ensure_bootstrapped(conn, ensure_schema_fn)
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -1002,7 +1075,7 @@ def create_password_reset_token(
     user_id: int,
     *,
     connection_factory: Callable = get_connection,
-    ensure_schema_fn: Callable = ensure_app_schema,
+    ensure_schema_fn: Callable | None = ensure_app_schema,
 ) -> tuple[str, datetime]:
     """Create and persist a one-time password-reset token."""
     raw_token = secrets.token_urlsafe(32)
@@ -1010,7 +1083,7 @@ def create_password_reset_token(
     now = datetime.now(timezone.utc)
     expires = now + timedelta(minutes=PASSWORD_RESET_TOKEN_TTL_MINUTES)
     with connection_factory() as conn:
-        ensure_schema_fn(conn)
+        _ensure_bootstrapped(conn, ensure_schema_fn)
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -1041,7 +1114,7 @@ def consume_password_reset_token(
     new_password: str,
     *,
     connection_factory: Callable = get_connection,
-    ensure_schema_fn: Callable = ensure_app_schema,
+    ensure_schema_fn: Callable | None = ensure_app_schema,
 ) -> int:
     """Consume reset token and update user password.
 
@@ -1051,7 +1124,7 @@ def consume_password_reset_token(
     token_hash = password_reset_token_hash(token)
     now = datetime.now(timezone.utc)
     with connection_factory() as conn:
-        ensure_schema_fn(conn)
+        _ensure_bootstrapped(conn, ensure_schema_fn)
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -1104,13 +1177,13 @@ def is_password_reset_token_valid(
     token: str,
     *,
     connection_factory: Callable = get_connection,
-    ensure_schema_fn: Callable = ensure_app_schema,
+    ensure_schema_fn: Callable | None = ensure_app_schema,
 ) -> bool:
     """Check whether reset token exists, is unused, and not expired."""
     token_hash = password_reset_token_hash(token)
     now = datetime.now(timezone.utc)
     with connection_factory() as conn:
-        ensure_schema_fn(conn)
+        _ensure_bootstrapped(conn, ensure_schema_fn)
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -1132,24 +1205,45 @@ def upsert_user(
     password: str,
     *,
     connection_factory: Callable = get_connection,
-    ensure_schema_fn: Callable = ensure_app_schema,
+    ensure_schema_fn: Callable | None = ensure_app_schema,
 ) -> dict:
     """Create or authenticate a user row keyed by email."""
     now = datetime.now(timezone.utc)
     password_hash = hash_password(password)
     with connection_factory() as conn:
-        ensure_schema_fn(conn)
+        _ensure_bootstrapped(conn, ensure_schema_fn)
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, email, password_hash, created_at_utc, last_seen_at_utc
-                FROM users
-                WHERE email = %s;
+                INSERT INTO users (
+                    email,
+                    password_hash,
+                    created_at_utc,
+                    last_seen_at_utc
+                )
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (email) DO NOTHING
+                RETURNING id, email, created_at_utc, last_seen_at_utc;
                 """,
-                (email,),
+                (email, password_hash, now, now),
             )
-            existing = cur.fetchone()
-            if existing:
+            row = cur.fetchone()
+            if row:
+                columns = [col.name for col in cur.description] if cur.description else []
+            else:
+                cur.execute(
+                    """
+                    SELECT id, email, password_hash, created_at_utc, last_seen_at_utc
+                    FROM users
+                    WHERE email = %s
+                    FOR UPDATE;
+                    """,
+                    (email,),
+                )
+                existing = cur.fetchone()
+                if not existing:
+                    raise ValueError("failed to create or load user")
+
                 user_id, _email, existing_hash, _created_at, _last_seen_at = existing
                 if existing_hash and not verify_password(password, str(existing_hash)):
                     raise ValueError("Incorrect email or password.")
@@ -1174,23 +1268,8 @@ def upsert_user(
                         """,
                         (now, user_id),
                     )
-            else:
-                cur.execute(
-                    """
-                    INSERT INTO users (
-                        email,
-                        password_hash,
-                        created_at_utc,
-                        last_seen_at_utc
-                    )
-                    VALUES (%s, %s, %s, %s)
-                    RETURNING id, email, created_at_utc, last_seen_at_utc;
-                    """,
-                    (email, password_hash, now, now),
-                )
-
-            row = cur.fetchone()
-            columns = [col.name for col in cur.description] if row else []
+                row = cur.fetchone()
+                columns = [col.name for col in cur.description] if row else []
         conn.commit()
     return _jsonify(dict(zip(columns, row))) if row else {}
 
@@ -1199,25 +1278,22 @@ def get_user_by_id(
     user_id: int,
     *,
     connection_factory: Callable = get_connection,
-    ensure_schema_fn: Callable = ensure_app_schema,
-) -> dict | None:
-    """Load a user row by id and update last-seen timestamp."""
-    now = datetime.now(timezone.utc)
+    ensure_schema_fn: Callable | None = ensure_app_schema,
+ ) -> dict | None:
+    """Load a user row by id without mutating session state."""
     with connection_factory() as conn:
-        ensure_schema_fn(conn)
+        _ensure_bootstrapped(conn, ensure_schema_fn)
         with conn.cursor() as cur:
             cur.execute(
                 """
-                UPDATE users
-                SET last_seen_at_utc = %s
-                WHERE id = %s
-                RETURNING id, email, created_at_utc, last_seen_at_utc;
+                SELECT id, email, created_at_utc, last_seen_at_utc
+                FROM users
+                WHERE id = %s;
                 """,
-                (now, user_id),
+                (user_id,),
             )
             row = cur.fetchone()
             columns = [col.name for col in cur.description] if row else []
-        conn.commit()
     if not row:
         return None
     return _jsonify(dict(zip(columns, row)))
@@ -1229,12 +1305,12 @@ def update_user_password(
     new_password: str,
     *,
     connection_factory: Callable = get_connection,
-    ensure_schema_fn: Callable = ensure_app_schema,
+    ensure_schema_fn: Callable | None = ensure_app_schema,
 ) -> None:
     """Verify current password and replace it with a new password hash."""
     now = datetime.now(timezone.utc)
     with connection_factory() as conn:
-        ensure_schema_fn(conn)
+        _ensure_bootstrapped(conn, ensure_schema_fn)
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -1274,7 +1350,7 @@ def count_liked_puppies(
     *,
     sources: tuple[str, ...] | None = None,
     connection_factory: Callable = get_connection,
-    ensure_schema_fn: Callable = ensure_app_schema,
+    ensure_schema_fn: Callable | None = ensure_app_schema,
 ) -> int:
     """Count likes for a given user."""
     active_sources = tuple(sources or get_pupswipe_sources())
@@ -1283,7 +1359,7 @@ def count_liked_puppies(
     normalized_species = _normalize_species_filter(species_filter)
     normalized_provider = _normalize_provider_filter(provider_filter, active_sources)
     with connection_factory() as conn:
-        ensure_schema_fn(conn)
+        _ensure_bootstrapped(conn, ensure_schema_fn)
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -1349,7 +1425,7 @@ def fetch_liked_puppies(
     *,
     sources: tuple[str, ...] | None = None,
     connection_factory: Callable = get_connection,
-    ensure_schema_fn: Callable = ensure_app_schema,
+    ensure_schema_fn: Callable | None = ensure_app_schema,
 ) -> list[dict]:
     """Load a user's liked puppies ordered by most recently liked."""
     active_sources = tuple(sources or get_pupswipe_sources())
@@ -1360,7 +1436,7 @@ def fetch_liked_puppies(
     normalized_species = _normalize_species_filter(species_filter)
     normalized_provider = _normalize_provider_filter(provider_filter, active_sources)
     with connection_factory() as conn:
-        ensure_schema_fn(conn)
+        _ensure_bootstrapped(conn, ensure_schema_fn)
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -1368,9 +1444,6 @@ def fetch_liked_puppies(
                     SELECT pet_id, species, created_at_utc, source
                     FROM pet_likes
                     WHERE user_id = %s
-                    ORDER BY created_at_utc DESC, pet_id DESC, species ASC
-                    LIMIT %s
-                    OFFSET %s
                 ), latest AS (
                     SELECT DISTINCT ON (pet_id, species)
                         pet_id,
@@ -1388,47 +1461,66 @@ def fetch_liked_puppies(
                         scraped_at_utc
                     FROM pet_profiles
                     ORDER BY pet_id, species, scraped_at_utc DESC
+                ), filtered_likes AS (
+                    SELECT
+                        liked.pet_id,
+                        liked.species,
+                        liked.created_at_utc AS liked_at_utc,
+                        COALESCE(status_pick.source, liked.source) AS source,
+                        COALESCE(status_pick.is_active, false) AS is_active,
+                        latest.url,
+                        latest.name,
+                        latest.breed,
+                        latest.gender,
+                        latest.age_raw,
+                        latest.age_months,
+                        latest.location,
+                        latest.status,
+                        latest.description,
+                        latest.media,
+                        latest.scraped_at_utc
+                    FROM liked
+                    LEFT JOIN latest
+                      ON latest.pet_id = liked.pet_id
+                     AND latest.species = liked.species
+                    LEFT JOIN LATERAL (
+                        SELECT source, is_active
+                        FROM pet_status
+                        WHERE pet_status.link = latest.url
+                          AND pet_status.source = ANY(%s::text[])
+                        ORDER BY pet_status.is_active DESC, pet_status.source ASC
+                        LIMIT 1
+                    ) AS status_pick
+                      ON true
+                    WHERE (%s = '' OR COALESCE(liked.species, '') = %s)
+                      AND (%s = '' OR COALESCE(status_pick.source, liked.source, '') = %s)
+                      AND (%s = '' OR COALESCE(latest.name, '') ILIKE %s ESCAPE '\\')
+                      AND (%s = '' OR COALESCE(latest.breed, '') ILIKE %s ESCAPE '\\')
                 )
                 SELECT
-                    liked.pet_id,
-                    liked.species,
-                    liked.created_at_utc AS liked_at_utc,
-                    COALESCE(status_pick.source, liked.source) AS source,
-                    COALESCE(status_pick.is_active, false) AS is_active,
-                    latest.url,
-                    latest.name,
-                    latest.breed,
-                    latest.gender,
-                    latest.age_raw,
-                    latest.age_months,
-                    latest.location,
-                    latest.status,
-                    latest.description,
-                    latest.media,
-                    latest.scraped_at_utc
-                FROM liked
-                LEFT JOIN latest
-                  ON latest.pet_id = liked.pet_id
-                 AND latest.species = liked.species
-                LEFT JOIN LATERAL (
-                    SELECT source, is_active
-                    FROM pet_status
-                    WHERE pet_status.link = latest.url
-                      AND pet_status.source = ANY(%s::text[])
-                    ORDER BY pet_status.is_active DESC, pet_status.source ASC
-                    LIMIT 1
-                ) AS status_pick
-                  ON true
-                WHERE (%s = '' OR COALESCE(liked.species, '') = %s)
-                  AND (%s = '' OR COALESCE(status_pick.source, liked.source, '') = %s)
-                  AND (%s = '' OR COALESCE(latest.name, '') ILIKE %s ESCAPE '\\')
-                  AND (%s = '' OR COALESCE(latest.breed, '') ILIKE %s ESCAPE '\\')
-                ORDER BY liked.created_at_utc DESC, liked.pet_id DESC, liked.species ASC;
+                    pet_id,
+                    species,
+                    liked_at_utc,
+                    source,
+                    is_active,
+                    url,
+                    name,
+                    breed,
+                    gender,
+                    age_raw,
+                    age_months,
+                    location,
+                    status,
+                    description,
+                    media,
+                    scraped_at_utc
+                FROM filtered_likes
+                ORDER BY liked_at_utc DESC, pet_id DESC, species ASC
+                LIMIT %s
+                OFFSET %s;
                 """,
                 (
                     user_id,
-                    page_limit,
-                    page_offset,
                     list(active_sources),
                     normalized_species,
                     normalized_species,
@@ -1438,6 +1530,8 @@ def fetch_liked_puppies(
                     _text_like_pattern(normalized_name),
                     normalized_breed,
                     _text_like_pattern(normalized_breed),
+                    page_limit,
+                    page_offset,
                 ),
             )
             rows = cur.fetchall()
@@ -1461,7 +1555,7 @@ def delete_liked_pet(
     species: str = "",
     *,
     connection_factory: Callable = get_connection,
-    ensure_schema_fn: Callable = ensure_app_schema,
+    ensure_schema_fn: Callable | None = ensure_app_schema,
 ) -> int:
     """Delete a single liked pet for a user.
 
@@ -1470,7 +1564,7 @@ def delete_liked_pet(
     """
     normalized_species = _normalize_species(species, default="dog")
     with connection_factory() as conn:
-        ensure_schema_fn(conn)
+        _ensure_bootstrapped(conn, ensure_schema_fn)
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -1496,7 +1590,7 @@ def delete_liked_puppies(
     only_unavailable: bool = False,
     sources: tuple[str, ...] | None = None,
     connection_factory: Callable = get_connection,
-    ensure_schema_fn: Callable = ensure_app_schema,
+    ensure_schema_fn: Callable | None = ensure_app_schema,
 ) -> int:
     """Delete liked pets for a user, optionally scoped by filters.
 
@@ -1513,7 +1607,7 @@ def delete_liked_puppies(
     normalized_species = _normalize_species_filter(species_filter)
     normalized_provider = _normalize_provider_filter(provider_filter, active_sources)
     with connection_factory() as conn:
-        ensure_schema_fn(conn)
+        _ensure_bootstrapped(conn, ensure_schema_fn)
         with conn.cursor() as cur:
             cur.execute(
                 """

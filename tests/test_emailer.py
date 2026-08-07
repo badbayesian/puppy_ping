@@ -1,5 +1,3 @@
-import os
-
 import smtplib
 import pytest
 
@@ -37,21 +35,16 @@ def test_send_email_no_send(monkeypatch):
     monkeypatch.setenv("EMAIL_PASS", "pass")
     monkeypatch.setenv("EMAILS_TO", "to@example.com")
 
-    dummy = {}
-
-    def fake_smtp(host, port):
-        smtp = DummySMTP(host, port)
-        dummy["smtp"] = smtp
-        return smtp
-
-    monkeypatch.setattr(smtplib, "SMTP_SSL", fake_smtp)
+    monkeypatch.setattr(
+        smtplib,
+        "SMTP_SSL",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("preview email should not open SMTP")
+        ),
+    )
 
     profile = PetProfile(dog_id=1, url="u", media=PetMedia())
     emailer.send_email([profile], send_to="to@example.com", send=False)
-
-    smtp = dummy["smtp"]
-    assert smtp.logged_in is True
-    assert smtp.sent is False
 
 
 def test_send_email_rejects_invalid_recipient(monkeypatch):
@@ -64,7 +57,9 @@ def test_send_email_rejects_invalid_recipient(monkeypatch):
     monkeypatch.setattr(
         smtplib,
         "SMTP_SSL",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not connect")),
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("should not connect")
+        ),
     )
 
     profile = PetProfile(dog_id=1, url="u", media=PetMedia())
@@ -97,7 +92,9 @@ def test_send_email_includes_cat_species_and_pet_subject(monkeypatch):
         media=PetMedia(),
     )
     monkeypatch.setattr(emailer, "get_sent_pet_keys", lambda *_args, **_kwargs: set())
-    monkeypatch.setattr(emailer, "mark_pet_profiles_emailed", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        emailer, "mark_pet_profiles_emailed", lambda *_args, **_kwargs: None
+    )
 
     emailer.send_email([profile], send_to="to@example.com", send=True)
 
@@ -124,7 +121,9 @@ def test_send_email_consolidates_new_and_seen(monkeypatch):
         return smtp
 
     monkeypatch.setattr(smtplib, "SMTP_SSL", fake_smtp)
-    monkeypatch.setattr(emailer, "get_sent_pet_keys", lambda *_args, **_kwargs: {(2, "cat")})
+    monkeypatch.setattr(
+        emailer, "get_sent_pet_keys", lambda *_args, **_kwargs: {(2, "cat")}
+    )
     recorded = {}
     monkeypatch.setattr(
         emailer,
@@ -138,8 +137,20 @@ def test_send_email_consolidates_new_and_seen(monkeypatch):
     )
 
     profiles = [
-        PetProfile(dog_id=1, species="dog", name="New Pup", url="https://example.com/d/1", media=PetMedia()),
-        PetProfile(dog_id=2, species="cat", name="Seen Cat", url="https://example.com/c/2", media=PetMedia()),
+        PetProfile(
+            dog_id=1,
+            species="dog",
+            name="New Pup",
+            url="https://example.com/d/1",
+            media=PetMedia(),
+        ),
+        PetProfile(
+            dog_id=2,
+            species="cat",
+            name="Seen Cat",
+            url="https://example.com/c/2",
+            media=PetMedia(),
+        ),
     ]
     emailer.send_email(profiles, send_to="to@example.com", send=True)
 
@@ -158,7 +169,9 @@ def test_send_email_preview_does_not_update_history(monkeypatch):
     monkeypatch.setenv("EMAIL_PORT", "465")
     monkeypatch.setenv("EMAIL_USER", "user")
     monkeypatch.setenv("EMAIL_PASS", "pass")
-    monkeypatch.setattr(smtplib, "SMTP_SSL", lambda *_args, **_kwargs: DummySMTP("host", 465))
+    monkeypatch.setattr(
+        smtplib, "SMTP_SSL", lambda *_args, **_kwargs: DummySMTP("host", 465)
+    )
     monkeypatch.setattr(emailer, "get_sent_pet_keys", lambda *_args, **_kwargs: set())
     monkeypatch.setattr(
         emailer,
@@ -168,5 +181,7 @@ def test_send_email_preview_does_not_update_history(monkeypatch):
         ),
     )
 
-    profile = PetProfile(dog_id=3, species="cat", name="Preview Cat", url="u", media=PetMedia())
+    profile = PetProfile(
+        dog_id=3, species="cat", name="Preview Cat", url="u", media=PetMedia()
+    )
     emailer.send_email([profile], send_to="to@example.com", send=False)

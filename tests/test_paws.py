@@ -18,7 +18,9 @@ def test_fetch_adoptable_pet_profile_links_paws_includes_multiple_species(monkey
     links = paws.fetch_adoptable_pet_profile_links_paws(store_in_db=False)
     assert "https://www.pawschicago.org/pet-available-for-adoption/showdog/1" in links
     assert "https://www.pawschicago.org/pet-available-for-adoption/showcat/2" in links
-    assert "https://www.pawschicago.org/pet-available-for-adoption/showrabbit/3" in links
+    assert (
+        "https://www.pawschicago.org/pet-available-for-adoption/showrabbit/3" in links
+    )
     assert "https://www.pawschicago.org/pet-available-for-adoption/showpet/4" in links
     assert all("not-a-profile" not in link for link in links)
 

@@ -234,15 +234,16 @@ def send_email(profiles: list["PetProfile"], send_to: str, send: bool = True) ->
 
     msg.add_alternative(html_body, subtype="html")
 
+    if not send:
+        print(msg)
+        return
+
     with smtplib.SMTP_SSL(
         os.environ["EMAIL_HOST"], int(os.environ["EMAIL_PORT"])
     ) as smtp:
         smtp.login(os.environ["EMAIL_USER"], os.environ["EMAIL_PASS"])
-        if send:
-            smtp.send_message(msg)
-            try:
-                mark_pet_profiles_emailed(recipient, profiles)
-            except Exception:
-                pass
-        else:
-            print(msg)
+        smtp.send_message(msg)
+        try:
+            mark_pet_profiles_emailed(recipient, profiles)
+        except Exception:
+            pass

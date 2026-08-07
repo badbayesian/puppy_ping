@@ -9,6 +9,7 @@ services:
     container_name: puppyping-scraper
     environment:
       TZ: America/Chicago
+      PUPSWIPE_SCRAPER_ENABLED: ${PUPSWIPE_SCRAPER_ENABLED:-true}
 
       EMAIL_HOST: ${EMAIL_HOST}
       EMAIL_PORT: ${EMAIL_PORT}
@@ -124,10 +125,10 @@ services:
 
 networks:
   puppyping_net:
-    name: puppyping_net
+    name: ${PUPPYPING_NETWORK_NAME:-puppyping_net}
 
 volumes:
   postgres_data:
-    name: puppyping_postgres_data
+    name: ${POSTGRES_VOLUME_NAME:-puppyping_postgres_data}
   pgadmin_data:
-    name: puppyping_pgadmin_data
+    name: ${PGADMIN_VOLUME_NAME:-puppyping_pgadmin_data}

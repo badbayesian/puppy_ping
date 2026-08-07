@@ -60,7 +60,9 @@ def test_run_no_email_stores_profiles_and_status(monkeypatch):
     monkeypatch.setattr(
         server,
         "send_email",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not send")),
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("should not send")
+        ),
     )
 
     server.logger = DummyLogger()
@@ -116,7 +118,9 @@ def test_run_continues_when_profile_fetch_raises(monkeypatch):
     monkeypatch.setattr(
         server,
         "send_email",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not send")),
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("should not send")
+        ),
     )
 
     server.logger = DummyLogger()
@@ -141,7 +145,9 @@ def test_run_sanitizes_email_recipients(monkeypatch):
     monkeypatch.setattr(server, "fetch_pet_profile", lambda source, url: profile)
     monkeypatch.setattr(server, "tqdm", lambda items, desc=None: items)
     monkeypatch.setattr(server, "store_pet_status", lambda *args, **kwargs: None)
-    monkeypatch.setattr(server, "store_pet_profiles_in_db", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        server, "store_pet_profiles_in_db", lambda *args, **kwargs: None
+    )
     monkeypatch.setattr(
         server,
         "get_email_subscribers",
@@ -231,19 +237,17 @@ def test_run_logs_remaining_animals_by_provider(monkeypatch):
         lambda source: [],
     )
     monkeypatch.setattr(server, "store_pet_status", lambda *args, **kwargs: None)
-    monkeypatch.setattr(server, "store_pet_profiles_in_db", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        server, "store_pet_profiles_in_db", lambda *args, **kwargs: None
+    )
 
     logger = DummyLogger()
     server.logger = logger
     server.run(send_ping=False, max_age=8.0, store_in_db=False)
 
     messages = [str(msg) for msg in logger.messages]
-    assert any(
-        "[paws_chicago] processed=1 remaining=1" in msg for msg in messages
-    )
-    assert any(
-        "[wright_way] processed=1 remaining=1" in msg for msg in messages
-    )
+    assert any("[paws_chicago] processed=1 remaining=1" in msg for msg in messages)
+    assert any("[wright_way] processed=1 remaining=1" in msg for msg in messages)
 
 
 def test_scrape_source_reuses_today_profiles_without_live_scrape(monkeypatch):
@@ -326,12 +330,13 @@ def test_run_passes_force_flag_to_source_scrape(monkeypatch):
         server,
         "_scrape_source",
         lambda source, store_in_db, force=False: (
-            captured.append((source, store_in_db, force))
-            or (source, set(), [], 0)
+            captured.append((source, store_in_db, force)) or (source, set(), [], 0)
         ),
     )
     monkeypatch.setattr(server, "store_pet_status", lambda *args, **kwargs: None)
-    monkeypatch.setattr(server, "store_pet_profiles_in_db", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        server, "store_pet_profiles_in_db", lambda *args, **kwargs: None
+    )
 
     server.logger = DummyLogger()
     server.run(send_ping=False, store_in_db=False, force=True)

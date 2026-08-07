@@ -79,9 +79,7 @@ def test_fetch_links_live(monkeypatch):
     <a href="/pet-available-for-adoption/showdog/1">Dog 1</a>
     <a href="/pet-available-for-adoption/showdog/2">Dog 2</a>
     """
-    monkeypatch.setattr(
-        paws, "get_cached_links", lambda source, ttl, logger=None: None
-    )
+    monkeypatch.setattr(paws, "get_cached_links", lambda source, ttl, logger=None: None)
     monkeypatch.setattr(
         paws,
         "_get_soup",
@@ -117,7 +115,8 @@ def test_fetch_links_fallback(monkeypatch):
 
 
 def test_fetch_pet_profile_parses_fields(monkeypatch):
-    html = """
+    html = (
+        """
     <html>
       <title>Buddy | PAWS</title>
       <div>Breed: Labrador</div>
@@ -127,9 +126,12 @@ def test_fetch_pet_profile_parses_fields(monkeypatch):
       <div>Location: Chicago</div>
       <div>Status: Available</div>
       <div class="children"><span class="rating_default"><span class="active r5"></span></span></div>
-      <p>This is a long description """ + ("x" * 90) + """</p>
+      <p>This is a long description """
+        + ("x" * 90)
+        + """</p>
     </html>
     """
+    )
     monkeypatch.setattr(paws, "_get_soup", lambda _: BeautifulSoup(html, "html.parser"))
     profile = paws.fetch_pet_profile_paws(
         "https://example.com/pet-available-for-adoption/showdog/123"

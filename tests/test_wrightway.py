@@ -2,7 +2,6 @@ from bs4 import BeautifulSoup
 
 import puppyping.providers.wrightway as wrightway
 
-
 PHOTO_1 = "https://g.petango.com/photos/364/1303e64e-805e-458b-946f-3403468fc47b.jpg"
 PHOTO_2 = "https://g.petango.com/photos/364/1c271c4d-933a-4176-816f-a2514ff1a1f6.jpg"
 PHOTO_3 = "https://g.petango.com/photos/364/289e9915-a64d-4222-b791-62ee31cc0e65.jpg"

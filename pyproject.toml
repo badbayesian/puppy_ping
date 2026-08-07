@@ -7,7 +7,7 @@ name = "puppyping"
 version = "0.1.0"
 description = "Scrape puppy listings from PAWS Chicago."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = "MIT"
 authors = [
   {name = "badbayesian"},
@@ -25,15 +25,23 @@ dependencies = [
 dev = [
   "black",
   "pytest",
+  "ruff",
 ]
 
 [project.scripts]
 puppyping = "puppyping.server:main"
 puppyping-healthcheck = "puppyping.healthcheck:main"
 
-[tool.setuptools]
-packages = ["puppyping"]
+[tool.setuptools.packages.find]
+include = ["puppyping*"]
 
 [tool.black]
 line-length = 88
 target-version = ["py312"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

@@ -5,6 +5,7 @@ set -eu
 # same DB/email configuration as the container.
 for key in \
   TZ \
+  PUPSWIPE_SCRAPER_ENABLED \
   LOG_LEVEL \
   EMAIL_HOST \
   EMAIL_PORT \
@@ -23,6 +24,11 @@ do
     export "$env_line"
   fi
 done
+
+if [ "${PUPSWIPE_SCRAPER_ENABLED:-true}" != "true" ]; then
+  echo "[scraper] disabled by PUPSWIPE_SCRAPER_ENABLED"
+  exit 0
+fi
 
 cd /app
 python -m puppyping --once

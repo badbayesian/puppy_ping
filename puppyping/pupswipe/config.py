@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 
 APP_DIR = Path(__file__).resolve().parent
 DEFAULT_LIMIT = 40
@@ -31,6 +32,49 @@ def get_pupswipe_sources() -> tuple[str, ...]:
     parsed = [item.strip() for item in raw.split(",") if item.strip()]
     deduped = tuple(dict.fromkeys(parsed))
     return deduped or DEFAULT_PUPSWIPE_SOURCES
+
+
+def require_session_secret() -> str:
+    """Return a configured cookie-signing secret or raise."""
+    secret = os.environ.get("PUPSWIPE_SESSION_SECRET", "").strip()
+    if not secret or secret == DEFAULT_SESSION_SECRET:
+        raise ValueError(
+            "PUPSWIPE_SESSION_SECRET must be set to a non-default value before "
+            "starting PupSwipe."
+        )
+    return secret
+
+
+def get_public_base_url() -> str:
+    """Return the configured public PupSwipe base URL or raise."""
+    raw = os.environ.get("PUPSWIPE_PUBLIC_URL", "").strip()
+    if not raw:
+        raise ValueError(
+            "PUPSWIPE_PUBLIC_URL must be set before starting PupSwipe."
+        )
+
+    parsed = urlparse(raw)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(
+            "PUPSWIPE_PUBLIC_URL must be an absolute http(s) URL."
+        )
+    if parsed.params or parsed.query or parsed.fragment:
+        raise ValueError(
+            "PUPSWIPE_PUBLIC_URL must not include params, query, or fragment."
+        )
+    return raw.rstrip("/")
+
+
+def build_public_url(path: str) -> str:
+    """Build an absolute public URL from a site-relative path."""
+    normalized_path = path if path.startswith("/") else f"/{path}"
+    return f"{get_public_base_url()}{normalized_path}"
+
+
+def validate_runtime_config() -> None:
+    """Validate required runtime configuration for PupSwipe startup."""
+    require_session_secret()
+    get_public_base_url()
 
 
 def provider_name(source: str | None, profile_url: str | None = None) -> str:
