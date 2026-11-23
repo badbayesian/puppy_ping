@@ -28,12 +28,14 @@ services:
       - /mnt/thebutler/config/puppy_ping/cache:/app/.cache
     depends_on:
       - postgres
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
     restart: unless-stopped
     networks:
       - puppyping_net
 
   postgres:
-    image: postgres:latest
+    image: postgres:18
     container_name: puppyping-postgres
     environment:
       TZ: America/Chicago
@@ -47,6 +49,14 @@ services:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
     restart: unless-stopped
     networks:
       - puppyping_net
@@ -117,7 +127,10 @@ services:
       retries: 3
       start_period: 10s
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
     restart: unless-stopped
     networks:
       - puppyping_net

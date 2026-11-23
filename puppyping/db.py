@@ -34,6 +34,7 @@ def _get_pg_config() -> dict[str, str | int]:
         "user": os.environ.get("PGUSER", "postgres"),
         "password": os.environ.get("PGPASSWORD", "postgres"),
         "dbname": os.environ.get("PGDATABASE", "puppyping"),
+        "connect_timeout": int(os.environ.get("PGCONNECT_TIMEOUT", "5")),
     }
 
 

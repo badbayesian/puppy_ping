@@ -63,12 +63,20 @@ def test_get_pg_config_defaults(monkeypatch):
     monkeypatch.delenv("PGUSER", raising=False)
     monkeypatch.delenv("PGPASSWORD", raising=False)
     monkeypatch.delenv("PGDATABASE", raising=False)
+    monkeypatch.delenv("PGCONNECT_TIMEOUT", raising=False)
     cfg = db._get_pg_config()
     assert cfg["host"] == "localhost"
     assert cfg["port"] == 5432
     assert cfg["user"] == "postgres"
     assert cfg["password"] == "postgres"
     assert cfg["dbname"] == "puppyping"
+    assert cfg["connect_timeout"] == 5
+
+
+def test_get_pg_config_connect_timeout_override(monkeypatch):
+    monkeypatch.setenv("PGCONNECT_TIMEOUT", "12")
+    cfg = db._get_pg_config()
+    assert cfg["connect_timeout"] == 12
 
 
 def test_store_profiles(monkeypatch):
