@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import os
 import smtplib
+import time
 from email.message import EmailMessage
 from urllib.parse import urlparse
 
@@ -14,6 +15,7 @@ from puppyping.pupswipe.config import (
     PASSWORD_HASH_ITERATIONS,
     PASSWORD_MIN_LENGTH,
     PASSWORD_RESET_TOKEN_TTL_MINUTES,
+    SESSION_COOKIE_MAX_AGE_SECONDS,
 )
 
 
@@ -130,30 +132,70 @@ def session_secret() -> str:
     return secret or DEFAULT_SESSION_SECRET
 
 
-def session_signature(user_id: int) -> str:
-    """Build an HMAC signature for a user-id session payload."""
-    payload = str(user_id).encode("utf-8")
+def session_signature(
+    user_id: int,
+    expires_at: int,
+    session_version: int = 1,
+) -> str:
+    """Build an HMAC signature for a versioned, expiring session payload."""
+    payload = f"v2:{user_id}:{expires_at}:{session_version}".encode("utf-8")
     secret = session_secret().encode("utf-8")
     return hmac.new(secret, payload, hashlib.sha256).hexdigest()
 
 
-def encode_session_value(user_id: int) -> str:
-    """Encode signed session cookie contents."""
-    return f"{user_id}.{session_signature(user_id)}"
+def encode_session_value(
+    user_id: int,
+    *,
+    session_version: int = 1,
+    now: int | None = None,
+    ttl_seconds: int = SESSION_COOKIE_MAX_AGE_SECONDS,
+) -> str:
+    """Encode signed session cookie contents with expiration and version."""
+    issued_at = int(time.time()) if now is None else int(now)
+    expires_at = issued_at + int(ttl_seconds)
+    signature = session_signature(user_id, expires_at, session_version)
+    return f"{user_id}.{expires_at}.{session_version}.{signature}"
 
 
-def decode_session_value(raw_value: str | None) -> int | None:
-    """Decode and verify a signed session cookie value."""
+def decode_session_token(
+    raw_value: str | None,
+    *,
+    now: int | None = None,
+) -> tuple[int, int] | None:
+    """Decode and verify a signed session cookie into ``(user_id, version)``."""
     value = (raw_value or "").strip()
-    if "." not in value:
+    parts = value.split(".")
+    if len(parts) != 4:
         return None
-    user_id_text, signature = value.split(".", 1)
-    if not user_id_text.isdigit():
+    user_id_text, expires_at_text, version_text, signature = parts
+    if (
+        not user_id_text.isascii()
+        or not user_id_text.isdigit()
+        or not expires_at_text.isascii()
+        or not expires_at_text.isdigit()
+        or not version_text.isascii()
+        or not version_text.isdigit()
+    ):
         return None
     user_id = int(user_id_text)
-    if user_id <= 0:
+    expires_at = int(expires_at_text)
+    session_version = int(version_text)
+    if user_id <= 0 or session_version < 1:
         return None
-    expected = session_signature(user_id)
+    current_ts = int(time.time()) if now is None else int(now)
+    if expires_at <= current_ts:
+        return None
+    expected = session_signature(user_id, expires_at, session_version)
     if not hmac.compare_digest(signature, expected):
         return None
-    return user_id
+    return user_id, session_version
+
+
+def decode_session_value(
+    raw_value: str | None,
+    *,
+    now: int | None = None,
+) -> int | None:
+    """Decode and verify a signed session cookie value."""
+    parsed = decode_session_token(raw_value, now=now)
+    return parsed[0] if parsed is not None else None

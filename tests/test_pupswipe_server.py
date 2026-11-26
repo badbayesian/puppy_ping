@@ -1,3 +1,9 @@
+from contextlib import contextmanager
+import hashlib
+import hmac
+import http.client
+from http.cookies import SimpleCookie
+import threading
 from types import SimpleNamespace
 
 import puppyping.pupswipe.server as pupswipe
@@ -1020,3 +1026,207 @@ def test_password_reset_token_hash_is_deterministic():
     assert pupswipe._password_reset_token_hash(
         token
     ) == pupswipe._password_reset_token_hash(token)
+
+
+@contextmanager
+def _running_pupswipe_server():
+    server = pupswipe.ThreadingHTTPServer(("127.0.0.1", 0), pupswipe.AppHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def _request_once(
+    port: int,
+    method: str,
+    path: str,
+    *,
+    body: bytes | None = None,
+    headers: dict[str, str] | None = None,
+):
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        conn.request(method, path, body=body, headers=headers or {})
+        resp = conn.getresponse()
+        data = resp.read()
+        return resp.status, resp.headers, data
+    finally:
+        conn.close()
+
+
+def test_static_asset_allowlist_blocks_source_files_and_sets_security_headers():
+    with _running_pupswipe_server() as server:
+        port = server.server_port
+
+        status_css, headers_css, body_css = _request_once(port, "GET", "/styles.css")
+        assert status_css == 200
+        assert headers_css.get("Content-Type", "").startswith("text/css")
+        assert headers_css.get("X-Content-Type-Options") == "nosniff"
+        assert headers_css.get("X-Frame-Options") == "DENY"
+        assert headers_css.get("Referrer-Policy") == "strict-origin-when-cross-origin"
+        assert len(body_css) > 0
+
+        status_js, headers_js, body_js = _request_once(port, "GET", "/swipe.js")
+        assert status_js == 200
+        assert headers_js.get("Content-Type", "").startswith("application/javascript")
+        assert len(body_js) > 0
+
+        status_head_css, _, body_head_css = _request_once(port, "HEAD", "/styles.css")
+        assert status_head_css == 200
+        assert body_head_css == b""
+
+        for blocked_path in (
+            "/config.py",
+            "/auth.py",
+            "/server.py",
+            "/__init__.py",
+            "/repository.py",
+            "/../pyproject.toml",
+            "/nonexistent",
+        ):
+            status, _headers, payload = _request_once(port, "GET", blocked_path)
+            assert status == 404, blocked_path
+            assert b"DEFAULT_SESSION_SECRET" not in payload
+            assert b"AppHandler" not in payload
+
+        head_py_status, _, head_py_body = _request_once(port, "HEAD", "/config.py")
+        assert head_py_status == 404
+        assert head_py_body == b""
+
+
+def test_head_health_returns_200(monkeypatch):
+    monkeypatch.setattr(pupswipe, "_fetch_puppies", lambda _limit: [])
+    with _running_pupswipe_server() as server:
+        status, headers, body = _request_once(server.server_port, "HEAD", "/api/health")
+        assert status == 200
+        assert headers.get("Content-Type") == "application/json"
+        assert body == b""
+
+
+def test_session_cookie_expiration_legacy_rejection_and_revocation(monkeypatch):
+    monkeypatch.setenv("PUPSWIPE_SESSION_SECRET", "unit-test-secret")
+    token = pupswipe._encode_session_value(
+        7, session_version=2, now=1000, ttl_seconds=60
+    )
+    assert pupswipe._decode_session_token(token, now=1059) == (7, 2)
+    assert pupswipe._decode_session_token(token, now=1060) is None
+    assert pupswipe._decode_session_value(token, now=1060) is None
+
+    legacy_sig = hmac.new(b"unit-test-secret", b"7", hashlib.sha256).hexdigest()
+    assert pupswipe._decode_session_token(f"7.{legacy_sig}") is None
+
+    fresh_cookie = pupswipe._encode_session_value(7, session_version=2)
+    handler = pupswipe.AppHandler.__new__(pupswipe.AppHandler)
+    handler.headers = {"Cookie": f"{pupswipe.SESSION_COOKIE_NAME}={fresh_cookie}"}
+
+    current_version = 2
+    monkeypatch.setattr(
+        pupswipe,
+        "_get_user_by_id",
+        lambda uid: {
+            "id": uid,
+            "email": "user@example.com",
+            "session_version": current_version,
+        },
+    )
+    assert handler._signed_in_user()["id"] == 7
+
+    current_version = 3
+    assert handler._signed_in_user() is None
+
+
+def test_post_reset_password_issues_updated_session_cookie(monkeypatch):
+    monkeypatch.setenv("PUPSWIPE_SESSION_SECRET", "unit-test-secret")
+    old_cookie = pupswipe._encode_session_value(7, session_version=1)
+    monkeypatch.setattr(
+        pupswipe,
+        "_get_user_by_id",
+        lambda uid: {
+            "id": uid,
+            "email": "user@example.com",
+            "session_version": 1,
+        },
+    )
+    monkeypatch.setattr(
+        pupswipe,
+        "_update_user_password",
+        lambda _uid, _cur, _new: 2,
+    )
+
+    with _running_pupswipe_server() as server:
+        body = (
+            b"current_password=oldpassword1"
+            b"&new_password=newpassword2"
+            b"&confirm_password=newpassword2"
+        )
+        status, headers, _data = _request_once(
+            server.server_port,
+            "POST",
+            "/reset-password",
+            body=body,
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Cookie": f"{pupswipe.SESSION_COOKIE_NAME}={old_cookie}",
+            },
+        )
+
+        assert status == 303
+        assert headers.get("Location") == "/likes?msg=Password+updated."
+        jar = SimpleCookie()
+        jar.load(headers.get("Set-Cookie", ""))
+        new_token = jar[pupswipe.SESSION_COOKIE_NAME].value
+        assert pupswipe._decode_session_token(new_token) == (7, 2)
+
+
+def test_post_forgot_password_reset_clears_session_cookie(monkeypatch):
+    monkeypatch.setattr(pupswipe, "_consume_password_reset_token", lambda _t, _p: 7)
+    with _running_pupswipe_server() as server:
+        body = (
+            b"token=validtoken"
+            b"&new_password=newpassword2"
+            b"&confirm_password=newpassword2"
+        )
+        status, headers, _data = _request_once(
+            server.server_port,
+            "POST",
+            "/forgot-password/reset",
+            body=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+
+        assert status == 303
+        set_cookie = headers.get("Set-Cookie", "")
+        assert f"{pupswipe.SESSION_COOKIE_NAME}=;" in set_cookie
+        assert "Max-Age=0" in set_cookie
+
+
+def test_post_rejects_oversized_and_invalid_content_length():
+    with _running_pupswipe_server() as server:
+        port = server.server_port
+
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        try:
+            conn.putrequest("POST", "/api/swipes")
+            conn.putheader("Content-Length", str(pupswipe.MAX_REQUEST_BODY_BYTES + 1))
+            conn.endheaders()
+            resp = conn.getresponse()
+            resp.read()
+            assert resp.status == 413
+        finally:
+            conn.close()
+
+        conn_bad = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        try:
+            conn_bad.putrequest("POST", "/swipe")
+            conn_bad.putheader("Content-Length", "notanumber")
+            conn_bad.endheaders()
+            resp_bad = conn_bad.getresponse()
+            resp_bad.read()
+            assert resp_bad.status == 400
+        finally:
+            conn_bad.close()

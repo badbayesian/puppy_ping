@@ -74,8 +74,15 @@ def ensure_app_schema(conn) -> None:
                 email TEXT NOT NULL UNIQUE,
                 password_hash TEXT,
                 created_at_utc TIMESTAMPTZ NOT NULL,
-                last_seen_at_utc TIMESTAMPTZ NOT NULL
+                last_seen_at_utc TIMESTAMPTZ NOT NULL,
+                session_version INTEGER NOT NULL DEFAULT 1
             );
+            """
+        )
+        cur.execute(
+            """
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 1;
             """
         )
         cur.execute(
@@ -1146,6 +1153,7 @@ def consume_password_reset_token(
                 """
                 UPDATE users
                 SET password_hash = %s,
+                    session_version = COALESCE(session_version, 1) + 1,
                     last_seen_at_utc = %s
                 WHERE id = %s;
                 """,
@@ -1223,7 +1231,7 @@ def upsert_user(
                 )
                 VALUES (%s, %s, %s, %s)
                 ON CONFLICT (email) DO NOTHING
-                RETURNING id, email, created_at_utc, last_seen_at_utc;
+                RETURNING id, email, created_at_utc, last_seen_at_utc, session_version;
                 """,
                 (email, password_hash, now, now),
             )
@@ -1254,7 +1262,7 @@ def upsert_user(
                         SET password_hash = %s,
                             last_seen_at_utc = %s
                         WHERE id = %s
-                        RETURNING id, email, created_at_utc, last_seen_at_utc;
+                        RETURNING id, email, created_at_utc, last_seen_at_utc, session_version;
                         """,
                         (password_hash, now, user_id),
                     )
@@ -1264,7 +1272,7 @@ def upsert_user(
                         UPDATE users
                         SET last_seen_at_utc = %s
                         WHERE id = %s
-                        RETURNING id, email, created_at_utc, last_seen_at_utc;
+                        RETURNING id, email, created_at_utc, last_seen_at_utc, session_version;
                         """,
                         (now, user_id),
                     )
@@ -1286,7 +1294,7 @@ def get_user_by_id(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, email, created_at_utc, last_seen_at_utc
+                SELECT id, email, created_at_utc, last_seen_at_utc, session_version
                 FROM users
                 WHERE id = %s;
                 """,
@@ -1306,7 +1314,7 @@ def update_user_password(
     *,
     connection_factory: Callable = get_connection,
     ensure_schema_fn: Callable | None = ensure_app_schema,
-) -> None:
+) -> int:
     """Verify current password and replace it with a new password hash."""
     now = datetime.now(timezone.utc)
     with connection_factory() as conn:
@@ -1333,12 +1341,16 @@ def update_user_password(
                 """
                 UPDATE users
                 SET password_hash = %s,
+                    session_version = COALESCE(session_version, 1) + 1,
                     last_seen_at_utc = %s
-                WHERE id = %s;
+                WHERE id = %s
+                RETURNING session_version;
                 """,
                 (hash_password(new_password), now, user_id),
             )
+            updated = cur.fetchone()
         conn.commit()
+    return int(updated[0]) if updated else 1
 
 
 def count_liked_puppies(

@@ -21,6 +21,9 @@ COPY docker/run_scrape_cron.sh /app/docker/run_scrape_cron.sh
 
 RUN pip install --no-cache-dir -U pip \
  && pip install --no-cache-dir . \
+ && groupadd --system --gid 10001 pupswipe \
+ && useradd --system --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin pupswipe \
+ && chmod -R a+rX /app/puppyping \
  && date -u +"%Y-%m-%dT%H:%M:%SZ" > /app/.build_updated_at_utc \
  && chmod +x /usr/local/bin/docker-entrypoint.sh /app/docker/run_scrape_cron.sh \
  && chmod 0644 /etc/cron.d/puppyping

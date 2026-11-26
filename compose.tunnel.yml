@@ -1,0 +1,9 @@
+services:
+  pupswipe:
+    networks:
+      - puppyping_net
+      - tunnel_public
+
+networks:
+  tunnel_public:
+    external: true
