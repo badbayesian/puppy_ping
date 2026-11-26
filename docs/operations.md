@@ -79,6 +79,8 @@ Daily schedule example (1:30 AM, 30-day retention):
 Use `scripts/recover_live_db_from_available_sources.py` to merge legacy backup data plus
 diskcache sqlite data into the live `puppyping` Postgres schema using append + dedupe.
 
+> Note: Production `compose.yml` no longer publishes host port `5433:5432` by default. For host-side recovery runs targeting `127.0.0.1:5433`, add a temporary `127.0.0.1:5433:5432` override (or SSH port forward) before running steps 5–6 and remove it once finished.
+
 1. Ensure share access:
 
 ```powershell

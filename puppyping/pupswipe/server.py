@@ -92,6 +92,8 @@ _ensure_app_schema = repo_ensure_app_schema
 FILTER_COOKIE_NAME = "pupswipe_filters"
 CATALOG_PAGE_SIZE = 200
 MAX_REQUEST_BODY_BYTES = 64 * 1024
+MAX_FILTER_COOKIE_LENGTH = 2048
+_HEX_DIGITS = frozenset("0123456789abcdef")
 ALLOWED_STATIC_ASSETS: dict[str, tuple[str, str]] = {
     "/styles.css": ("styles.css", "text/css; charset=utf-8"),
     "/swipe.js": ("swipe.js", "application/javascript; charset=utf-8"),
@@ -100,7 +102,6 @@ HEAD_OK_PATHS = frozenset(
     {
         "/",
         "/index.html",
-        "/api/health",
         "/catalog",
         "/signin",
         "/forgot-password",
@@ -180,18 +181,22 @@ def _encode_filter_cookie_value(payload: dict[str, str | float]) -> str:
 
 def _decode_filter_cookie_value(raw_value: str | None) -> dict[str, str | float] | None:
     """Decode and verify signed filter cookie payload."""
-    value = (raw_value or "").strip()
-    if "." not in value:
-        return None
-    encoded, signature = value.split(".", 1)
-    expected = hmac.new(
-        session_secret().encode("utf-8"),
-        encoded.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-    if not hmac.compare_digest(signature, expected):
-        return None
     try:
+        value = (raw_value or "").strip()
+        if not value or len(value) > MAX_FILTER_COOKIE_LENGTH or "." not in value:
+            return None
+        encoded, signature = value.split(".", 1)
+        if not encoded or not encoded.isascii():
+            return None
+        if len(signature) != 64 or not all(ch in _HEX_DIGITS for ch in signature):
+            return None
+        expected = hmac.new(
+            session_secret().encode("utf-8"),
+            encoded.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            return None
         padding = "=" * (-len(encoded) % 4)
         decoded = base64.urlsafe_b64decode(encoded + padding).decode("utf-8")
         parsed = json.loads(decoded)
@@ -513,13 +518,18 @@ def _get_user_by_id(user_id: int) -> dict | None:
 
 
 def _update_user_password(
-    user_id: int, current_password: str, new_password: str
+    user_id: int,
+    current_password: str,
+    new_password: str,
+    *,
+    expected_session_version: int | None = None,
 ) -> int:
     """Verify current password and replace it with a new password hash."""
     return repo_update_user_password(
         user_id,
         current_password,
         new_password,
+        expected_session_version=expected_session_version,
         connection_factory=get_connection,
         ensure_schema_fn=None,
     )
@@ -780,6 +790,19 @@ def _render_catalog_page(
 class AppHandler(BaseHTTPRequestHandler):
     """HTTP handler for PupSwipe API and server-rendered pages."""
 
+    def send_header(self, keyword: str, value: str) -> None:
+        """Reject CR/LF header injection before writing an HTTP header."""
+        keyword_text = str(keyword)
+        value_text = str(value)
+        if (
+            "\r" in keyword_text
+            or "\n" in keyword_text
+            or "\r" in value_text
+            or "\n" in value_text
+        ):
+            raise ValueError("HTTP header names and values must not contain CR/LF.")
+        super().send_header(keyword, value)
+
     def end_headers(self):
         """Attach client hint and security headers before completing the response.
 
@@ -841,16 +864,16 @@ class AppHandler(BaseHTTPRequestHandler):
         if raw_length is None or not raw_length.strip():
             length = 0
         else:
-            try:
-                length = int(raw_length.strip())
-            except ValueError:
+            stripped = raw_length.strip()
+            if not stripped.isascii() or not stripped.isdigit():
                 self.close_connection = True
                 self.send_error(400, "Invalid Content-Length")
                 return None
-        if length < 0:
-            self.close_connection = True
-            self.send_error(400, "Invalid Content-Length")
-            return None
+            if len(stripped) > 20:
+                self.close_connection = True
+                self.send_error(413, "Payload Too Large")
+                return None
+            length = int(stripped)
         if length > MAX_REQUEST_BODY_BYTES:
             self.close_connection = True
             self.send_error(413, "Payload Too Large")
@@ -1480,15 +1503,21 @@ class AppHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path in ALLOWED_STATIC_ASSETS:
             return self._serve_static_asset(parsed.path, head_only=True)
-        if parsed.path in HEAD_OK_PATHS:
-            content_type = (
-                "application/json"
-                if parsed.path == "/api/health"
-                else "text/html; charset=utf-8"
-            )
+        if parsed.path == "/api/health":
+            try:
+                _fetch_puppies(1)
+            except Exception:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                return
             self.send_response(200)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", "0")
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            return
+        if parsed.path in HEAD_OK_PATHS:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
             return
         self.send_error(404, "Not Found")
@@ -1694,9 +1723,17 @@ class AppHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 return
 
+            current_version = _safe_int(
+                str(current_user.get("session_version", 1)), 1
+            )
+            if current_version < 1:
+                current_version = 1
             try:
                 new_session_version = _update_user_password(
-                    user_id, current_password, new_password
+                    user_id,
+                    current_password,
+                    new_password,
+                    expected_session_version=current_version,
                 )
             except Exception as exc:
                 query = urlencode({"msg": f"Failed to reset password: {exc}"})
@@ -2122,6 +2159,8 @@ class AppHandler(BaseHTTPRequestHandler):
             payload = json.loads(body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             return self._send_json(400, {"error": "invalid json"})
+        if not isinstance(payload, dict):
+            return self._send_json(400, {"error": "json payload must be an object"})
 
         try:
             dog_id = int(payload.get("dog_id"))

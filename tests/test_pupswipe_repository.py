@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import pytest
+
 import puppyping.pupswipe.repository as repository
 
 
@@ -149,7 +151,7 @@ def test_get_user_by_id_is_read_only(monkeypatch):
 def test_update_user_password_increments_session_version(monkeypatch):
     conn = DummyConn(
         steps=[
-            {"fetchone": ("stored-hash",)},
+            {"fetchone": ("stored-hash", 3)},
             {"fetchone": (4,)},
         ]
     )
@@ -167,16 +169,65 @@ def test_update_user_password_increments_session_version(monkeypatch):
         5,
         "oldpass123",
         "newpass123",
+        expected_session_version=3,
         connection_factory=lambda: conn,
         ensure_schema_fn=None,
     )
 
     assert new_version == 4
     assert conn.commits == 1
+    select_sql, select_params = conn.cursor_obj.executed[0]
+    assert "FOR UPDATE" in select_sql
+    assert select_params == (5,)
     update_sql, update_params = conn.cursor_obj.executed[1]
     assert "session_version = COALESCE(session_version, 1) + 1" in update_sql
+    assert "COALESCE(session_version, 1) = %s" in update_sql
     assert update_params[0] == "hashed:newpass123"
-    assert update_params[2] == 5
+    assert update_params[2:] == (5, 3)
+
+
+def test_update_user_password_rejects_stale_session_version(monkeypatch):
+    conn = DummyConn(steps=[{"fetchone": ("stored-hash", 4)}])
+    monkeypatch.setattr(
+        repository,
+        "verify_password",
+        lambda password, password_hash: True,
+    )
+
+    with pytest.raises(ValueError, match="Session expired"):
+        repository.update_user_password(
+            5,
+            "oldpass123",
+            "newpass123",
+            expected_session_version=3,
+            connection_factory=lambda: conn,
+            ensure_schema_fn=None,
+        )
+
+    assert conn.commits == 0
+    assert len(conn.cursor_obj.executed) == 1
+
+    conn_no_row = DummyConn(
+        steps=[
+            {"fetchone": ("stored-hash", 3)},
+            {"fetchone": None},
+        ]
+    )
+    monkeypatch.setattr(
+        repository, "hash_password", lambda password: f"hashed:{password}"
+    )
+
+    with pytest.raises(ValueError, match="Session expired"):
+        repository.update_user_password(
+            5,
+            "oldpass123",
+            "newpass123",
+            expected_session_version=3,
+            connection_factory=lambda: conn_no_row,
+            ensure_schema_fn=None,
+        )
+
+    assert conn_no_row.commits == 0
 
 
 def test_consume_password_reset_token_increments_session_version(monkeypatch):

@@ -39,9 +39,9 @@ docker compose --env-file .env.dev -f compose.yml -f compose.feature.yml up --bu
 
 Production (`compose.yml`):
 
-- PupSwipe: `8010`
-- Postgres: `5433`
-- pgAdmin: `5050`
+- PupSwipe: `127.0.0.1:8010` (loopback-only by default; use `compose.tunnel.yml` for Cloudflare Tunnel)
+- Postgres: internal `puppyping_net:5432` only (no host port published by default)
+- pgAdmin: `127.0.0.1:5050` (opt-in only via `--profile debug`)
 
 Development (`compose.yml` + `compose.dev.yml`):
 

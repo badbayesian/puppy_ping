@@ -6,6 +6,8 @@ from http.cookies import SimpleCookie
 import threading
 from types import SimpleNamespace
 
+import pytest
+
 import puppyping.pupswipe.server as pupswipe
 
 
@@ -774,6 +776,13 @@ def test_normalize_next_path_allows_only_local_paths():
     assert pupswipe._normalize_next_path("likes", "/") == "/"
     assert pupswipe._normalize_next_path("https://evil.example", "/") == "/"
     assert pupswipe._normalize_next_path("//evil.example", "/") == "/"
+    assert pupswipe._normalize_next_path("/\\evil.example", "/") == "/"
+    assert (
+        pupswipe._normalize_next_path("/x\r\nSet-Cookie: a=b", "/signin") == "/signin"
+    )
+    assert pupswipe._normalize_next_path("\r\n/likes", "/signin") == "/signin"
+    assert pupswipe._normalize_next_path("/likes\x00", "/") == "/"
+    assert pupswipe._normalize_next_path("/likes\x7f", "/") == "/"
 
 
 def test_session_cookie_value_round_trip_and_tamper(monkeypatch):
@@ -1100,10 +1109,26 @@ def test_static_asset_allowlist_blocks_source_files_and_sets_security_headers():
 
 
 def test_head_health_returns_200(monkeypatch):
-    monkeypatch.setattr(pupswipe, "_fetch_puppies", lambda _limit: [])
+    calls = []
+    monkeypatch.setattr(
+        pupswipe, "_fetch_puppies", lambda limit: calls.append(limit) or []
+    )
     with _running_pupswipe_server() as server:
         status, headers, body = _request_once(server.server_port, "HEAD", "/api/health")
         assert status == 200
+        assert headers.get("Content-Type") == "application/json"
+        assert body == b""
+        assert calls == [1]
+
+
+def test_head_health_returns_500_when_db_fails(monkeypatch):
+    def _boom(_limit):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(pupswipe, "_fetch_puppies", _boom)
+    with _running_pupswipe_server() as server:
+        status, headers, body = _request_once(server.server_port, "HEAD", "/api/health")
+        assert status == 500
         assert headers.get("Content-Type") == "application/json"
         assert body == b""
 
@@ -1152,11 +1177,13 @@ def test_post_reset_password_issues_updated_session_cookie(monkeypatch):
             "session_version": 1,
         },
     )
-    monkeypatch.setattr(
-        pupswipe,
-        "_update_user_password",
-        lambda _uid, _cur, _new: 2,
-    )
+    captured = {}
+
+    def _fake_update(_uid, _cur, _new, *, expected_session_version=None):
+        captured["expected_session_version"] = expected_session_version
+        return 2
+
+    monkeypatch.setattr(pupswipe, "_update_user_password", _fake_update)
 
     with _running_pupswipe_server() as server:
         body = (
@@ -1176,6 +1203,7 @@ def test_post_reset_password_issues_updated_session_cookie(monkeypatch):
         )
 
         assert status == 303
+        assert captured["expected_session_version"] == 1
         assert headers.get("Location") == "/likes?msg=Password+updated."
         jar = SimpleCookie()
         jar.load(headers.get("Set-Cookie", ""))
@@ -1220,13 +1248,85 @@ def test_post_rejects_oversized_and_invalid_content_length():
         finally:
             conn.close()
 
-        conn_bad = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
-        try:
-            conn_bad.putrequest("POST", "/swipe")
-            conn_bad.putheader("Content-Length", "notanumber")
-            conn_bad.endheaders()
-            resp_bad = conn_bad.getresponse()
-            resp_bad.read()
-            assert resp_bad.status == 400
-        finally:
-            conn_bad.close()
+        for bad_len in ("notanumber", "1_0", "-1"):
+            conn_bad = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            try:
+                conn_bad.putrequest("POST", "/swipe")
+                conn_bad.putheader("Content-Length", bad_len)
+                conn_bad.endheaders()
+                resp_bad = conn_bad.getresponse()
+                resp_bad.read()
+                assert resp_bad.status == 400
+            finally:
+                conn_bad.close()
+
+
+def test_signout_and_signin_reject_crlf_and_backslash_redirects():
+    with _running_pupswipe_server() as server:
+        port = server.server_port
+        for target in (
+            "/x%0d%0aSet-Cookie:%20pupswipe_session=evil;%20Path=/",
+            "/%5Cevil.example",
+        ):
+            status, headers, _body = _request_once(
+                port,
+                "POST",
+                "/signout",
+                body=f"next={target}".encode("ascii"),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            assert status == 303
+            assert headers.get("Location") == "/signin"
+            set_cookies = headers.get_all("Set-Cookie") or []
+            assert all("evil" not in item for item in set_cookies)
+
+
+def test_send_header_rejects_crlf():
+    handler = pupswipe.AppHandler.__new__(pupswipe.AppHandler)
+    with pytest.raises(ValueError, match="CR/LF"):
+        handler.send_header("Location", "/x\r\nSet-Cookie: evil=1")
+    with pytest.raises(ValueError, match="CR/LF"):
+        handler.send_header("X-Bad\r\n", "val")
+
+
+def test_crafted_session_and_filter_cookies_do_not_crash_handler():
+    bad_session_values = [
+        "1.9999999999.1.\xe9" + ("a" * 63),
+        ("9" * 5000) + ".9999999999.1." + ("a" * 64),
+        "1.9999999999.1." + ("a" * 300),
+    ]
+    for raw in bad_session_values:
+        assert pupswipe._decode_session_token(raw) is None
+    assert pupswipe._decode_filter_cookie_value("abc.\xe9" + ("a" * 63)) is None
+    assert pupswipe._decode_filter_cookie_value(("a" * 2100) + "." + ("b" * 64)) is None
+
+    with _running_pupswipe_server() as server:
+        for cookie_header in (
+            f'{pupswipe.SESSION_COOKIE_NAME}="1.9999999999.1.\\351' + ("a" * 63) + '"',
+            f"{pupswipe.SESSION_COOKIE_NAME}="
+            + ("9" * 5000)
+            + ".9999999999.1."
+            + ("a" * 64),
+            f'{pupswipe.FILTER_COOKIE_NAME}="abc.\\351' + ("a" * 63) + '"',
+        ):
+            status, _headers, _body = _request_once(
+                server.server_port,
+                "GET",
+                "/signin",
+                headers={"Cookie": cookie_header},
+            )
+            assert status == 200
+
+
+def test_post_api_swipes_rejects_non_object_json():
+    with _running_pupswipe_server() as server:
+        status, headers, payload = _request_once(
+            server.server_port,
+            "POST",
+            "/api/swipes",
+            body=b"[]",
+            headers={"Content-Type": "application/json"},
+        )
+        assert status == 400
+        assert headers.get("Content-Type") == "application/json"
+        assert b"json payload must be an object" in payload

@@ -18,6 +18,10 @@ from puppyping.pupswipe.config import (
     SESSION_COOKIE_MAX_AGE_SECONDS,
 )
 
+MAX_SESSION_COOKIE_LENGTH = 256
+MAX_SESSION_NUMERIC_FIELD_LENGTH = 20
+_HEX_DIGITS = frozenset("0123456789abcdef")
+
 
 def password_error(password: str) -> str | None:
     """Return a validation error for password input, if any."""
@@ -115,7 +119,10 @@ def send_password_reset_email(email: str, reset_link: str) -> None:
 
 def normalize_next_path(value: str | None, default: str = "/") -> str:
     """Normalize redirect targets to local absolute paths only."""
-    candidate = (value or "").strip()
+    raw = value or ""
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F or ch == "\\" for ch in raw):
+        return default
+    candidate = raw.strip()
     if not candidate:
         return default
     parsed = urlparse(candidate)
@@ -163,32 +170,38 @@ def decode_session_token(
     now: int | None = None,
 ) -> tuple[int, int] | None:
     """Decode and verify a signed session cookie into ``(user_id, version)``."""
-    value = (raw_value or "").strip()
-    parts = value.split(".")
-    if len(parts) != 4:
+    try:
+        value = (raw_value or "").strip()
+        if not value or len(value) > MAX_SESSION_COOKIE_LENGTH:
+            return None
+        parts = value.split(".")
+        if len(parts) != 4:
+            return None
+        user_id_text, expires_at_text, version_text, signature = parts
+        for field in (user_id_text, expires_at_text, version_text):
+            if (
+                not field
+                or len(field) > MAX_SESSION_NUMERIC_FIELD_LENGTH
+                or not field.isascii()
+                or not field.isdigit()
+            ):
+                return None
+        if len(signature) != 64 or not all(ch in _HEX_DIGITS for ch in signature):
+            return None
+        user_id = int(user_id_text)
+        expires_at = int(expires_at_text)
+        session_version = int(version_text)
+        if user_id <= 0 or session_version < 1:
+            return None
+        current_ts = int(time.time()) if now is None else int(now)
+        if expires_at <= current_ts:
+            return None
+        expected = session_signature(user_id, expires_at, session_version)
+        if not hmac.compare_digest(signature, expected):
+            return None
+        return user_id, session_version
+    except Exception:
         return None
-    user_id_text, expires_at_text, version_text, signature = parts
-    if (
-        not user_id_text.isascii()
-        or not user_id_text.isdigit()
-        or not expires_at_text.isascii()
-        or not expires_at_text.isdigit()
-        or not version_text.isascii()
-        or not version_text.isdigit()
-    ):
-        return None
-    user_id = int(user_id_text)
-    expires_at = int(expires_at_text)
-    session_version = int(version_text)
-    if user_id <= 0 or session_version < 1:
-        return None
-    current_ts = int(time.time()) if now is None else int(now)
-    if expires_at <= current_ts:
-        return None
-    expected = session_signature(user_id, expires_at, session_version)
-    if not hmac.compare_digest(signature, expected):
-        return None
-    return user_id, session_version
 
 
 def decode_session_value(
