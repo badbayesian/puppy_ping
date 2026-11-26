@@ -783,6 +783,8 @@ def test_normalize_next_path_allows_only_local_paths():
     assert pupswipe._normalize_next_path("\r\n/likes", "/signin") == "/signin"
     assert pupswipe._normalize_next_path("/likes\x00", "/") == "/"
     assert pupswipe._normalize_next_path("/likes\x7f", "/") == "/"
+    assert pupswipe._normalize_next_path("/日", "/") == "/"
+    assert pupswipe._normalize_next_path("/café", "/") == "/"
 
 
 def test_session_cookie_value_round_trip_and_tamper(monkeypatch):
@@ -1267,6 +1269,7 @@ def test_signout_and_signin_reject_crlf_and_backslash_redirects():
         for target in (
             "/x%0d%0aSet-Cookie:%20pupswipe_session=evil;%20Path=/",
             "/%5Cevil.example",
+            "/%E6%97%A5",
         ):
             status, headers, _body = _request_once(
                 port,
@@ -1279,6 +1282,10 @@ def test_signout_and_signin_reject_crlf_and_backslash_redirects():
             assert headers.get("Location") == "/signin"
             set_cookies = headers.get_all("Set-Cookie") or []
             assert all("evil" not in item for item in set_cookies)
+            assert any(
+                f"{pupswipe.SESSION_COOKIE_NAME}=;" in item and "Max-Age=0" in item
+                for item in set_cookies
+            )
 
 
 def test_send_header_rejects_crlf():
@@ -1330,3 +1337,19 @@ def test_post_api_swipes_rejects_non_object_json():
         assert status == 400
         assert headers.get("Content-Type") == "application/json"
         assert b"json payload must be an object" in payload
+
+
+def test_app_handler_sets_socket_timeout_and_handles_read_timeout():
+    assert pupswipe.AppHandler.timeout == 30
+
+    class SlowStream:
+        def read(self, _size: int) -> bytes:
+            raise TimeoutError("timed out")
+
+    handler = pupswipe.AppHandler.__new__(pupswipe.AppHandler)
+    handler.headers = {"Content-Length": "10"}
+    handler.rfile = SlowStream()
+    handler.close_connection = False
+
+    assert handler._read_body() is None
+    assert handler.close_connection is True

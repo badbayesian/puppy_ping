@@ -790,6 +790,8 @@ def _render_catalog_page(
 class AppHandler(BaseHTTPRequestHandler):
     """HTTP handler for PupSwipe API and server-rendered pages."""
 
+    timeout = 30
+
     def send_header(self, keyword: str, value: str) -> None:
         """Reject CR/LF header injection before writing an HTTP header."""
         keyword_text = str(keyword)
@@ -878,7 +880,13 @@ class AppHandler(BaseHTTPRequestHandler):
             self.close_connection = True
             self.send_error(413, "Payload Too Large")
             return None
-        return self.rfile.read(length) if length else b""
+        if not length:
+            return b""
+        try:
+            return self.rfile.read(length)
+        except TimeoutError:
+            self.close_connection = True
+            return None
 
     def _read_form(self) -> dict[str, list[str]] | None:
         """Read and parse an application/x-www-form-urlencoded request body."""

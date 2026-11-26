@@ -120,7 +120,9 @@ def send_password_reset_email(email: str, reset_link: str) -> None:
 def normalize_next_path(value: str | None, default: str = "/") -> str:
     """Normalize redirect targets to local absolute paths only."""
     raw = value or ""
-    if any(ord(ch) < 0x20 or ord(ch) == 0x7F or ch == "\\" for ch in raw):
+    if not raw.isascii() or any(
+        ord(ch) < 0x20 or ord(ch) == 0x7F or ch == "\\" for ch in raw
+    ):
         return default
     candidate = raw.strip()
     if not candidate:
