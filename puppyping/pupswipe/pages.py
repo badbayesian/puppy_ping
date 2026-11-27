@@ -8,7 +8,6 @@ import json
 from typing import Callable
 from urllib.parse import urlencode
 
-
 _FAVICON_SVG = (
     "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>"
     "<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>"
@@ -22,7 +21,9 @@ _FAVICON_SVG = (
     "<path d='M20 42c0-7 5-12 12-12s12 5 12 12c0 4-3 7-7 7-3 0-4-1-5-1s-2 1-5 1c-4 0-7-3-7-7z' fill='%23fff'/>"
     "</svg>"
 )
-_FAVICON_LINK = f'<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,{_FAVICON_SVG}" />'
+_FAVICON_LINK = (
+    f'<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,{_FAVICON_SVG}" />'
+)
 
 _ICON_PAW = (
     '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">'
@@ -281,7 +282,9 @@ def _render_filter_bar(
     """Render shared collapsible filter drawer with live auto-filter inputs."""
     open_attr = " open" if open_by_default else ""
     active_count = len(active_filter_chips)
-    count_badge = f'<span class="filter-count">{active_count}</span>' if active_count else ""
+    count_badge = (
+        f'<span class="filter-count">{active_count}</span>' if active_count else ""
+    )
     chips_html = ""
     if active_filter_chips:
         chips_items = "".join(
@@ -761,13 +764,10 @@ def _render_page(
 
     if not puppies:
         filtered_species_label = _filtered_species_label(normalized_species)
-        empty_msg = (
-            message
-            or (
-                f"No {filtered_species_label} match those filters. Try different filters."
-                if active_filters
-                else "No puppies to show yet. Run scraper and refresh."
-            )
+        empty_msg = message or (
+            f"No {filtered_species_label} match those filters. Try different filters."
+            if active_filters
+            else "No puppies to show yet. Run scraper and refresh."
         )
         if review_passed and not message:
             empty_msg = "No previously passed pets are still available in this filter."
@@ -900,7 +900,9 @@ def _render_page(
         else ""
     )
 
-    info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    info_msg = (
+        f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    )
     ecosystem_html = _render_ecosystem_section(
         input_id="subscribe-email",
         current_photo_index=current_photo_index,
@@ -1058,7 +1060,9 @@ def _render_catalog_page(
         catalog_filter_hidden_inputs.append(
             f'<input type="hidden" name="max_age" value="{escape(f"{normalized_max_age_months:g}")}" />'
         )
-    catalog_filter_hidden_inputs_html = "\n                ".join(catalog_filter_hidden_inputs)
+    catalog_filter_hidden_inputs_html = "\n                ".join(
+        catalog_filter_hidden_inputs
+    )
 
     topbar_html = _render_topbar(
         active_nav="catalog",
@@ -1091,7 +1095,9 @@ def _render_catalog_page(
     clear_filter_html = ""
     if active_filters:
         clear_query = urlencode({"clear_filters": "1"})
-        clear_filter_html = f'<a class="clear-filter" href="/catalog?{clear_query}">Clear</a>'
+        clear_filter_html = (
+            f'<a class="clear-filter" href="/catalog?{clear_query}">Clear</a>'
+        )
 
     provider_options_html = _provider_options_html(
         PUPSWIPE_SOURCES, normalized_provider, _provider_name
@@ -1192,13 +1198,10 @@ def _render_catalog_page(
     has_cards = bool(cards_html)
     if not cards_html:
         filtered_species_label = _filtered_species_label(normalized_species)
-        empty_copy = (
-            message
-            or (
-                f"No {filtered_species_label} match those filters. Try different filters."
-                if active_filters
-                else "No pets available right now."
-            )
+        empty_copy = message or (
+            f"No {filtered_species_label} match those filters. Try different filters."
+            if active_filters
+            else "No pets available right now."
         )
         cards_html = f"""
           <div class="state state-empty">
@@ -1248,7 +1251,9 @@ def _render_signin_page(
 
     safe_next = _normalize_next_path(next_path, "/likes")
     escaped_email = escape(email_value)
-    info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    info_msg = (
+        f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    )
     topbar_html = _render_topbar(
         active_nav="signin",
         title="PupSwipe",
@@ -1266,9 +1271,7 @@ def _render_signin_page(
           </p>
         """
     else:
-        account_line = (
-            '<p class="auth-copy">Use email + password. First sign-in creates your account.</p>'
-        )
+        account_line = '<p class="auth-copy">Use email + password. First sign-in creates your account.</p>'
 
     page_html = f"""<!doctype html>
 <html lang="en">
@@ -1331,7 +1334,9 @@ def _render_forgot_password_page(
     email_value: str = "",
 ) -> bytes:
     """Render forgot-password request page."""
-    info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    info_msg = (
+        f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    )
     escaped_email = escape(email_value)
     topbar_html = _render_topbar(
         active_nav="auth",
@@ -1394,7 +1399,9 @@ def _render_forgot_password_reset_page(
     """Render reset-password-by-token page."""
     PASSWORD_MIN_LENGTH = deps.password_min_length
 
-    info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    info_msg = (
+        f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    )
     topbar_html = _render_topbar(
         active_nav="auth",
         title="PupSwipe",
@@ -1464,7 +1471,9 @@ def _render_reset_password_page(
     """Render reset-password page for a signed-in user."""
     PASSWORD_MIN_LENGTH = deps.password_min_length
 
-    info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    info_msg = (
+        f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    )
     topbar_html = _render_topbar(
         active_nav="auth",
         title="PupSwipe",
@@ -1623,14 +1632,18 @@ def _render_likes_page(
         likes_filter_hidden_inputs.append(
             f'<input type="hidden" name="provider" value="{escape(normalized_provider)}" />'
         )
-    likes_filter_hidden_inputs_html = "\n              ".join(likes_filter_hidden_inputs)
+    likes_filter_hidden_inputs_html = "\n              ".join(
+        likes_filter_hidden_inputs
+    )
     likes_chips_html = ""
     if active_filters:
         likes_chips_items = "".join(
             f'<span class="filter-chip">{escape(chip)}</span>'
             for chip in active_filters
         )
-        likes_chips_html = f'<span class="active-filter-chips">{likes_chips_items}</span>'
+        likes_chips_html = (
+            f'<span class="active-filter-chips">{likes_chips_items}</span>'
+        )
     likes_count_badge = (
         f'<span class="filter-count">{len(active_filters)}</span>'
         if active_filters
@@ -1720,7 +1733,9 @@ def _render_likes_page(
       </section>
     """
 
-    info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    info_msg = (
+        f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    )
     cards_html = ""
     for pup in puppies:
         dog_id = _safe_int(str(pup.get("pet_id") or pup.get("dog_id")), 0)
@@ -1765,7 +1780,8 @@ def _render_likes_page(
             )
             share_title_raw = str(pup.get("name") or "this pet").strip() or "this pet"
             share_animal_raw = (
-                " ".join(str(pup.get("species") or "pet").split()).strip().lower() or "pet"
+                " ".join(str(pup.get("species") or "pet").split()).strip().lower()
+                or "pet"
             )
             share_body = (
                 f"I found a cute {share_animal_raw} on PupSwipe. "

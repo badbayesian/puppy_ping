@@ -112,7 +112,9 @@ def send_password_reset_email(email: str, reset_link: str) -> None:
             ]
         )
     )
-    with smtplib.SMTP_SSL(os.environ["EMAIL_HOST"], int(os.environ["EMAIL_PORT"])) as smtp:
+    with smtplib.SMTP_SSL(
+        os.environ["EMAIL_HOST"], int(os.environ["EMAIL_PORT"])
+    ) as smtp:
         smtp.login(os.environ["EMAIL_USER"], os.environ["EMAIL_PASS"])
         smtp.send_message(msg)
 

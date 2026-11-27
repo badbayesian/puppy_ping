@@ -17,6 +17,7 @@ from .email_utils import parse_email_list, sanitize_emails
 from .emailer import send_email
 from .models import PetMedia, PetProfile
 from .providers import (
+    clear_provider_caches,
     fetch_adoptable_pet_profile_links,
     fetch_pet_profile,
 )
@@ -149,7 +150,9 @@ def _load_scraped_profiles_for_source_today(source: str) -> list[PetProfile]:
                     embeds=[str(v) for v in (embeds or [])],
                 ),
                 scraped_at_utc=(
-                    row[14].isoformat() if hasattr(row[14], "isoformat") else str(row[14])
+                    row[14].isoformat()
+                    if hasattr(row[14], "isoformat")
+                    else str(row[14])
                 ),
             )
         )
@@ -220,9 +223,11 @@ def run(
     force: bool = False,
 ) -> None:
     """Run one scrape/email cycle."""
-    logger.info(f"Starting scrape run.")
+    logger.info("Starting scrape run.")
     if force:
-        logger.info("Force mode enabled; scraping even if providers were scraped today.")
+        logger.info(
+            "Force mode enabled; scraping even if providers were scraped today."
+        )
     if store_in_db:
         # Run schema DDL once before concurrent source work to avoid lock contention.
         with get_connection() as conn:
@@ -276,9 +281,7 @@ def run(
                 delivered += 1
             except Exception as exc:
                 logger.warning(f"Failed to send email to {sending}: {exc}")
-        logger.info(
-            f"Sent email to {delivered} recipients."
-        )
+        logger.info(f"Sent email to {delivered} recipients.")
 
 
 def main() -> None:
@@ -316,12 +319,11 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.clear_cache:
-        cache.clear()
+        clear_provider_caches()
         print("Cache cleared.")
 
     store_in_db = not args.no_storage
     send_ping = not args.no_email
-    
 
     run(send_ping=send_ping, store_in_db=store_in_db, force=args.force)
 

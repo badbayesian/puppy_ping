@@ -13,6 +13,14 @@ class DummyLogger:
         self.messages.append(msg)
 
 
+class _DummyConn:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
 def test_safe_less_than():
     assert server.__safe_less_than(3, 5) is True
     assert server.__safe_less_than(None, 5) is False
@@ -38,6 +46,8 @@ def test_run_no_email_stores_profiles_and_status(monkeypatch):
         lambda source, url: profile,
     )
     monkeypatch.setattr(server, "tqdm", lambda items, desc=None: items)
+    monkeypatch.setattr(server, "get_connection", lambda: _DummyConn())
+    monkeypatch.setattr(server, "ensure_schema", lambda _conn: None)
     monkeypatch.setattr(
         server,
         "_load_scraped_profiles_for_source_today",
@@ -102,6 +112,8 @@ def test_run_continues_when_profile_fetch_raises(monkeypatch):
 
     monkeypatch.setattr(server, "fetch_pet_profile", fake_fetch_profile)
     monkeypatch.setattr(server, "tqdm", lambda items, desc=None: items)
+    monkeypatch.setattr(server, "get_connection", lambda: _DummyConn())
+    monkeypatch.setattr(server, "ensure_schema", lambda _conn: None)
     monkeypatch.setattr(
         server,
         "_load_scraped_profiles_for_source_today",
@@ -144,6 +156,13 @@ def test_run_sanitizes_email_recipients(monkeypatch):
     )
     monkeypatch.setattr(server, "fetch_pet_profile", lambda source, url: profile)
     monkeypatch.setattr(server, "tqdm", lambda items, desc=None: items)
+    monkeypatch.setattr(server, "get_connection", lambda: _DummyConn())
+    monkeypatch.setattr(server, "ensure_schema", lambda _conn: None)
+    monkeypatch.setattr(
+        server,
+        "_load_scraped_profiles_for_source_today",
+        lambda source: [],
+    )
     monkeypatch.setattr(server, "store_pet_status", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         server, "store_pet_profiles_in_db", lambda *args, **kwargs: None
@@ -231,6 +250,8 @@ def test_run_logs_remaining_animals_by_provider(monkeypatch):
     )
     monkeypatch.setattr(server, "fetch_pet_profile", lambda source, url: profile)
     monkeypatch.setattr(server, "tqdm", lambda items, desc=None: items)
+    monkeypatch.setattr(server, "get_connection", lambda: _DummyConn())
+    monkeypatch.setattr(server, "ensure_schema", lambda _conn: None)
     monkeypatch.setattr(
         server,
         "_load_scraped_profiles_for_source_today",

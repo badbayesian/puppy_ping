@@ -83,7 +83,6 @@ from puppyping.pupswipe.repository import (
     upsert_user as repo_upsert_user,
 )
 
-
 _get_pupswipe_sources = get_pupswipe_sources
 _provider_name = provider_name
 PUPSWIPE_SOURCES = _get_pupswipe_sources()
@@ -833,7 +832,9 @@ class AppHandler(BaseHTTPRequestHandler):
         data = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header(
+            "Cache-Control", "no-store, no-cache, must-revalidate, max-age=0"
+        )
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
         self.send_header("Content-Length", str(len(data)))
@@ -844,7 +845,9 @@ class AppHandler(BaseHTTPRequestHandler):
         """Write an HTML response."""
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header(
+            "Cache-Control", "no-store, no-cache, must-revalidate, max-age=0"
+        )
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
         self.send_header("Content-Length", str(len(body)))
@@ -932,9 +935,7 @@ class AppHandler(BaseHTTPRequestHandler):
 
     def _session_cookie_header(self, user_id: int, session_version: int = 1) -> str:
         """Build Set-Cookie header value for a signed-in session."""
-        token_value = _encode_session_value(
-            user_id, session_version=session_version
-        )
+        token_value = _encode_session_value(user_id, session_version=session_version)
         parts = [
             f"{SESSION_COOKIE_NAME}={token_value}",
             "Path=/",
@@ -1073,7 +1074,9 @@ class AppHandler(BaseHTTPRequestHandler):
             screen_payload = payload.get("screen_info")
             if isinstance(screen_payload, dict):
                 for key, value in screen_payload.items():
-                    if isinstance(key, str) and isinstance(value, (str, int, float, bool)):
+                    if isinstance(key, str) and isinstance(
+                        value, (str, int, float, bool)
+                    ):
                         info[f"client_{key}"] = value
 
             for key in (
@@ -1154,9 +1157,7 @@ class AppHandler(BaseHTTPRequestHandler):
                     500,
                     {"error": "failed to load puppies", "detail": str(exc)},
                 )
-            return self._send_json(
-                200, {"items": puppies, "count": len(puppies)}
-            )
+            return self._send_json(200, {"items": puppies, "count": len(puppies)})
 
         if parsed.path == "/api/health":
             try:
@@ -1208,7 +1209,9 @@ class AppHandler(BaseHTTPRequestHandler):
                 message=message,
                 next_path=next_path,
                 email_value=email_value,
-                signed_in_email=str(current_user.get("email") or "") if current_user else None,
+                signed_in_email=(
+                    str(current_user.get("email") or "") if current_user else None
+                ),
             )
             return self._send_html(200, body)
 
@@ -1226,8 +1229,12 @@ class AppHandler(BaseHTTPRequestHandler):
             message = likes_query.get("msg", [None])[0]
             name_filter = _normalize_name_filter(likes_query.get("name", [""])[0])
             breed_filter = _normalize_breed_filter(likes_query.get("breed", [""])[0])
-            species_filter = _normalize_species_filter(likes_query.get("species", [""])[0])
-            provider_filter = _normalize_provider_filter(likes_query.get("provider", [""])[0])
+            species_filter = _normalize_species_filter(
+                likes_query.get("species", [""])[0]
+            )
+            provider_filter = _normalize_provider_filter(
+                likes_query.get("provider", [""])[0]
+            )
             try:
                 user_id = _safe_int(str(current_user.get("id")), 0)
                 if user_id <= 0:
@@ -1302,7 +1309,8 @@ class AppHandler(BaseHTTPRequestHandler):
                 "on",
             }
             raw_filters_present = any(
-                key in query for key in ("breed", "name", "provider", "species", "max_age")
+                key in query
+                for key in ("breed", "name", "provider", "species", "max_age")
             )
 
             if clear_filters:
@@ -1339,7 +1347,9 @@ class AppHandler(BaseHTTPRequestHandler):
                     else f"/catalog?{urlencode(redirect_params)}"
                 )
                 self.send_response(303)
-                self.send_header("Set-Cookie", self._filter_cookie_header(normalized_payload))
+                self.send_header(
+                    "Set-Cookie", self._filter_cookie_header(normalized_payload)
+                )
                 self.send_header("Location", location)
                 self.end_headers()
                 return
@@ -1422,7 +1432,8 @@ class AppHandler(BaseHTTPRequestHandler):
                 "on",
             }
             raw_filters_present = any(
-                key in query for key in ("breed", "name", "provider", "species", "max_age")
+                key in query
+                for key in ("breed", "name", "provider", "species", "max_age")
             )
 
             if clear_filters:
@@ -1463,9 +1474,13 @@ class AppHandler(BaseHTTPRequestHandler):
                     ),
                     review_mode=review_mode,
                 )
-                location = "/" if not redirect_params else f"/?{urlencode(redirect_params)}"
+                location = (
+                    "/" if not redirect_params else f"/?{urlencode(redirect_params)}"
+                )
                 self.send_response(303)
-                self.send_header("Set-Cookie", self._filter_cookie_header(normalized_payload))
+                self.send_header(
+                    "Set-Cookie", self._filter_cookie_header(normalized_payload)
+                )
                 self.send_header("Location", location)
                 self.end_headers()
                 return
@@ -1477,7 +1492,9 @@ class AppHandler(BaseHTTPRequestHandler):
             species_filter = str(filter_state.get("species") or "")
             max_age_months = float(filter_state.get("max_age") or MAX_PUPPY_AGE_MONTHS)
             current_user = self._signed_in_user()
-            current_user_id = _safe_int(str(current_user.get("id")), 0) if current_user else 0
+            current_user_id = (
+                _safe_int(str(current_user.get("id")), 0) if current_user else 0
+            )
             viewer_context = self._user_context()
             viewer_user_key = (
                 str(viewer_context.get("user_key") or "")
@@ -1566,7 +1583,9 @@ class AppHandler(BaseHTTPRequestHandler):
                     if user_id > 0:
                         token, _expires = _create_password_reset_token(user_id)
                         reset_query = urlencode({"token": token})
-                        reset_link = self._absolute_url(f"/forgot-password/reset?{reset_query}")
+                        reset_link = self._absolute_url(
+                            f"/forgot-password/reset?{reset_query}"
+                        )
                         _send_password_reset_email(email, reset_link)
             except Exception:
                 # Intentionally suppress details to prevent user enumeration.
@@ -1609,7 +1628,9 @@ class AppHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 return
 
-            query = urlencode({"msg": "Password updated. Sign in with your new password."})
+            query = urlencode(
+                {"msg": "Password updated. Sign in with your new password."}
+            )
             self.send_response(303)
             self.send_header("Set-Cookie", self._clear_session_cookie_header())
             self.send_header("Location", f"/signin?{query}")
@@ -1687,7 +1708,9 @@ class AppHandler(BaseHTTPRequestHandler):
             form = self._read_form()
             if form is None:
                 return
-            next_path = _normalize_next_path(form.get("next", ["/signin"])[0], "/signin")
+            next_path = _normalize_next_path(
+                form.get("next", ["/signin"])[0], "/signin"
+            )
             self.send_response(303)
             self.send_header("Set-Cookie", self._clear_session_cookie_header())
             self.send_header("Location", next_path)
@@ -1731,9 +1754,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 return
 
-            current_version = _safe_int(
-                str(current_user.get("session_version", 1)), 1
-            )
+            current_version = _safe_int(str(current_user.get("session_version", 1)), 1)
             if current_version < 1:
                 current_version = 1
             try:
@@ -1948,7 +1969,9 @@ class AppHandler(BaseHTTPRequestHandler):
             pet_species = (
                 _normalize_species_filter(form.get("pet_species", [""])[0]) or "dog"
             )
-            swipe_source = _normalize_provider_filter(form.get("source", [""])[0]) or None
+            swipe_source = (
+                _normalize_provider_filter(form.get("source", [""])[0]) or None
+            )
 
             if user_id <= 0 or pet_id <= 0:
                 query_params["msg"] = "Unable to like pet."
@@ -2060,7 +2083,9 @@ class AppHandler(BaseHTTPRequestHandler):
             except (TypeError, ValueError):
                 breed_filter = _normalize_breed_filter(form.get("breed", [""])[0])
                 name_filter = _normalize_name_filter(form.get("name", [""])[0])
-                provider_filter = _normalize_provider_filter(form.get("provider", [""])[0])
+                provider_filter = _normalize_provider_filter(
+                    form.get("provider", [""])[0]
+                )
                 species_filter = _normalize_species_filter(form.get("species", [""])[0])
                 max_age_months = _normalize_max_age_filter(
                     form.get("max_age", [str(MAX_PUPPY_AGE_MONTHS)])[0]
@@ -2082,7 +2107,9 @@ class AppHandler(BaseHTTPRequestHandler):
                 return
 
             swipe = form.get("swipe", [""])[0]
-            swipe_source = _normalize_provider_filter(form.get("source", [""])[0]) or None
+            swipe_source = (
+                _normalize_provider_filter(form.get("source", [""])[0]) or None
+            )
             breed_filter = _normalize_breed_filter(form.get("breed", [""])[0])
             name_filter = _normalize_name_filter(form.get("name", [""])[0])
             provider_filter = _normalize_provider_filter(form.get("provider", [""])[0])
@@ -2182,7 +2209,9 @@ class AppHandler(BaseHTTPRequestHandler):
         source = _normalize_provider_filter(str(payload.get("source") or "")) or None
         species = payload.get("species")
         current_user = self._signed_in_user()
-        current_user_id = _safe_int(str(current_user.get("id")), 0) if current_user else 0
+        current_user_id = (
+            _safe_int(str(current_user.get("id")), 0) if current_user else 0
+        )
         try:
             _store_swipe(
                 dog_id=dog_id,
@@ -2193,7 +2222,9 @@ class AppHandler(BaseHTTPRequestHandler):
                 **self._user_context(payload),
             )
         except Exception as exc:
-            return self._send_json(500, {"error": "failed to store swipe", "detail": str(exc)})
+            return self._send_json(
+                500, {"error": "failed to store swipe", "detail": str(exc)}
+            )
 
         return self._send_json(201, {"ok": True})
 

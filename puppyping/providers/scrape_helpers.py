@@ -9,7 +9,9 @@ from bs4 import BeautifulSoup
 
 try:
     from ..models import PetMedia
-except ImportError:  # Allows running as a script: python puppyping/providers/scrape_helpers.py
+except (
+    ImportError
+):  # Allows running as a script: python puppyping/providers/scrape_helpers.py
     from models import PetMedia
 
 
@@ -29,6 +31,7 @@ def _get_soup(url: str) -> BeautifulSoup:
     r = requests.get(url, headers=headers, timeout=30)
     r.raise_for_status()
     return BeautifulSoup(r.text, "html.parser")
+
 
 def _clean(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()

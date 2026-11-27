@@ -188,8 +188,7 @@ def send_email(profiles: list["PetProfile"], send_to: str, send: bool = True) ->
 
     compact_cards: list[str] = []
     for p in seen_profiles:
-        compact_cards.append(
-            f"""
+        compact_cards.append(f"""
             <div style="border:1px solid #ececec;border-radius:10px;padding:10px;margin:10px 0;">
               <div style="font-size:16px;font-weight:700;">
                 {escape(fmt(p.name))} <span style="color:#666;font-weight:400;">(#{p.pet_id}, {escape(_display_species(p.species))})</span>
@@ -203,8 +202,7 @@ def send_email(profiles: list["PetProfile"], send_to: str, send: bool = True) ->
                 <a href="{escape(p.url)}">{escape(p.url)}</a>
               </div>
             </div>
-            """
-        )
+            """)
 
     full_section_html = (
         "<h3 style='margin:14px 0 8px;'>New pets (full details)</h3>"

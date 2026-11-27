@@ -251,13 +251,11 @@ def extract_legacy_source(
     stats = {"dog_profiles_rows": 0, "dog_status_rows": 0, "cached_links_rows": 0}
     with source_conn.cursor(row_factory=dict_row) as cur:
         if table_exists(cur, "dog_profiles"):
-            cur.execute(
-                """
+            cur.execute("""
                 SELECT dog_id,url,name,breed,gender,age_raw,age_months,weight_lbs,location,status,ratings,description,media,scraped_at_utc
                 FROM dog_profiles
                 ORDER BY scraped_at_utc ASC;
-                """
-            )
+                """)
             for row in cur.fetchall():
                 scraped_at = to_dt(row.get("scraped_at_utc"))
                 if scraped_at is None:
@@ -517,8 +515,7 @@ def reconcile_active_flags(
         cur.execute(
             "UPDATE cached_links SET last_active_utc=COALESCE(last_active_utc,fetched_at_utc);"
         )
-        cur.execute(
-            """
+        cur.execute("""
             UPDATE pet_status
             SET species = CASE
                 WHEN LOWER(link) LIKE '%/showcat/%' THEN 'cat'
@@ -526,8 +523,7 @@ def reconcile_active_flags(
                 ELSE COALESCE(NULLIF(species,''), 'unknown')
             END
             WHERE species IS NULL OR species='' OR species='unknown';
-            """
-        )
+            """)
         if sources_seen:
             cur.execute(
                 """

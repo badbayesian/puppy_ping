@@ -3,16 +3,21 @@ from __future__ import annotations
 from typing import Callable
 
 from .anti_cruelty import (
+    cache as anti_cruelty_cache,
     fetch_adoptable_pet_profile_links_anti_cruelty,
     fetch_pet_profile_anti_cruelty,
 )
-from .paws import fetch_adoptable_pet_profile_links_paws, fetch_pet_profile_paws
+from .paws import (
+    cache as paws_cache,
+    fetch_adoptable_pet_profile_links_paws,
+    fetch_pet_profile_paws,
+)
 from .wrightway import (
+    cache as wrightway_cache,
     fetch_adoptable_pet_profile_links_wrightway,
     fetch_pet_profile_wrightway,
 )
 from ..models import PetProfile
-
 
 FETCH_PET_LINKS: dict[str, Callable[[bool], set[str]]] = {
     "anti_cruelty": fetch_adoptable_pet_profile_links_anti_cruelty,
@@ -53,3 +58,9 @@ def fetch_adoptable_dog_profile_links(source: str, store_in_db: bool) -> set[str
 def fetch_dog_profile(source: str, url: str) -> PetProfile:
     """Backward-compatible alias for fetch_pet_profile."""
     return fetch_pet_profile(source=source, url=url)
+
+
+def clear_provider_caches() -> None:
+    """Clear all provider disk caches."""
+    for provider_cache in (anti_cruelty_cache, paws_cache, wrightway_cache):
+        provider_cache.clear()

@@ -66,6 +66,7 @@ def cached(ttl_seconds: int):
     Returns:
         A decorator that caches function results.
     """
+
     def decorator(fn):
         """Wrap a function with diskcache lookup.
 
@@ -102,6 +103,7 @@ def cached(ttl_seconds: int):
 
     return decorator
 
+
 def fetch_adoptable_pet_profile_links_paws(store_in_db: bool) -> set[str]:
     """Fetch adoptable pet profile links from PAWS.
 
@@ -116,7 +118,7 @@ def fetch_adoptable_pet_profile_links_paws(store_in_db: bool) -> set[str]:
             cached_links = None
 
     if cached_links:
-        logger.info(f"Using cached links from Postgres (fresh).")
+        logger.info("Using cached links from Postgres (fresh).")
         return set(cached_links)
 
     try:
@@ -134,20 +136,21 @@ def fetch_adoptable_pet_profile_links_paws(store_in_db: bool) -> set[str]:
                 store_cached_links(SOURCE, sorted(links), logger=logger)
                 logger.info(f"Stored {len(links)} links in Postgres cache.")
             except Exception:
-                logger.exception(f"Failed to store links in Postgres cache.")
+                logger.exception("Failed to store links in Postgres cache.")
                 pass
         return links
     except Exception:
-        logger.exception(f"Live fetch failed; falling back to cached links.")
+        logger.exception("Live fetch failed; falling back to cached links.")
         # Fall back to last cached value even if stale or cache read previously failed.
         try:
             cached_links = get_cached_links(SOURCE, CACHE_TIME * 365, logger=logger)
         except Exception:
             cached_links = None
         if cached_links:
-            logger.info(f"Using cached links from Postgres (stale).")
+            logger.info("Using cached links from Postgres (stale).")
             return set(cached_links)
         raise
+
 
 def _parse_paws_species_and_id(url: str) -> tuple[str, int]:
     """Extract species and pet id from a PAWS profile URL."""
