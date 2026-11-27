@@ -1,5 +1,9 @@
 services:
   puppyping:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    pull_policy: build
     container_name: puppyping-scraper-dev
     environment:
       LOG_LEVEL: DEBUG
@@ -21,12 +25,24 @@ services:
     ports:
       - "5434:5432"
 
+  postgres-backup:
+    container_name: puppyping-postgres-backup-dev
+    profiles:
+      - backup
+    volumes: !override
+      - ./data/backups:/backups
+      - ./docker/run_postgres_backup.sh:/usr/local/bin/run_postgres_backup.sh:ro
+
   pgadmin:
     container_name: puppyping-pgadmin-dev
     ports:
       - "5051:80"
 
   pupswipe:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    pull_policy: build
     container_name: puppyping-pupswipe-dev
     environment:
       TZ: America/Chicago

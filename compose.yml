@@ -1,11 +1,7 @@
 services:
   puppyping:
-    build:
-      context: . #/mnt/thebutler/media/repos/puppy_ping
-      dockerfile: Dockerfile
-      args:
-        APP_GIT_COMMIT: ${APP_GIT_COMMIT:-unknown}
-        APP_GIT_BRANCH: ${APP_GIT_BRANCH:-unknown}
+    image: ${PUPPYPING_IMAGE:-ghcr.io/badbayesian/puppy_ping:main}
+    pull_policy: always
     container_name: puppyping-scraper
     environment:
       TZ: America/Chicago
@@ -59,6 +55,36 @@ services:
     networks:
       - puppyping_net
 
+  postgres-backup:
+    image: postgres:18
+    container_name: puppyping-postgres-backup
+    environment:
+      TZ: America/Chicago
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: ${PGDATABASE}
+      PGUSER: ${PGUSER}
+      PGPASSWORD: ${PGPASSWORD}
+      BACKUP_DIR: /backups
+      BACKUP_HOUR: ${POSTGRES_BACKUP_HOUR:-1}
+      BACKUP_MINUTE: ${POSTGRES_BACKUP_MINUTE:-30}
+      BACKUP_RETENTION_DAYS: ${POSTGRES_BACKUP_RETENTION_DAYS:-30}
+      BACKUP_ON_STARTUP: ${POSTGRES_BACKUP_ON_STARTUP:-false}
+    volumes:
+      - ${POSTGRES_BACKUP_DIR:-/mnt/thebutler/config/puppy_ping/postgres/backups}:/backups
+      - ./docker/run_postgres_backup.sh:/usr/local/bin/run_postgres_backup.sh:ro
+    entrypoint:
+      - sh
+      - /usr/local/bin/run_postgres_backup.sh
+    depends_on:
+      postgres:
+        condition: service_healthy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+    restart: unless-stopped
+    networks:
+      - puppyping_net
+
   pgadmin:
     image: dpage/pgadmin4:latest
     container_name: puppyping-pgadmin
@@ -83,14 +109,9 @@ services:
       - puppyping_net
 
   pupswipe:
-    build:
-      context: . #/mnt/thebutler/media/repos/puppy_ping
-      dockerfile: Dockerfile
-      args:
-        APP_GIT_COMMIT: ${APP_GIT_COMMIT:-unknown}
-        APP_GIT_BRANCH: ${APP_GIT_BRANCH:-unknown}
-    container_name: puppyping-pupswipe
+    image: ${PUPPYPING_IMAGE:-ghcr.io/badbayesian/puppy_ping:main}
     pull_policy: always
+    container_name: puppyping-pupswipe
     user: "10001:10001"
     read_only: true
     tmpfs:
