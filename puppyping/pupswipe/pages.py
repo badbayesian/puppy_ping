@@ -10,11 +10,7 @@ from urllib.parse import urlencode
 
 _FAVICON_SVG = (
     "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>"
-    "<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>"
-    "<stop offset='0%' stop-color='%23f47252'/>"
-    "<stop offset='100%' stop-color='%23147a58'/>"
-    "</linearGradient></defs>"
-    "<rect width='64' height='64' rx='18' fill='url(%23g)'/>"
+    "<rect width='64' height='64' rx='18' fill='%23d85a3f'/>"
     "<circle cx='21' cy='25' r='5' fill='%23fff'/>"
     "<circle cx='32' cy='20' r='5' fill='%23fff'/>"
     "<circle cx='43' cy='25' r='5' fill='%23fff'/>"
@@ -26,7 +22,7 @@ _FAVICON_LINK = (
 )
 
 _ICON_PAW = (
-    '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">'
+    '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">'
     '<circle cx="6.5" cy="9.5" r="2.1"/>'
     '<circle cx="12" cy="7.2" r="2.2"/>'
     '<circle cx="17.5" cy="9.5" r="2.1"/>'
@@ -34,49 +30,55 @@ _ICON_PAW = (
     "</svg>"
 )
 _ICON_PASS = (
-    '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" '
-    'stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" '
+    'stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
     '<path d="M18 6 6 18M6 6l12 12"/></svg>'
 )
 _ICON_HEART = (
-    '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">'
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">'
+    '<path d="M12 20.4s-7.4-4.7-9.6-9.1C.8 8.2 2.4 4.5 6 4.1c2-.2 3.8.8 4.9 2.3h2.2C14.2 4.9 16 3.9 18 4.1c3.6.4 5.2 4.1 3.6 7.2-2.2 4.4-9.6 9.1-9.6 9.1z"/>'
+    "</svg>"
+)
+_ICON_HEART_OUTLINE = (
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
     '<path d="M12 20.4s-7.4-4.7-9.6-9.1C.8 8.2 2.4 4.5 6 4.1c2-.2 3.8.8 4.9 2.3h2.2C14.2 4.9 16 3.9 18 4.1c3.6.4 5.2 4.1 3.6 7.2-2.2 4.4-9.6 9.1-9.6 9.1z"/>'
     "</svg>"
 )
 _ICON_RANDOM = (
-    '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" '
-    'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" '
+    'stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
     '<path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>'
 )
 _ICON_EXTERNAL = (
-    '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" '
+    '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" '
     'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
     '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>'
     '<path d="M15 3h6v6M10 14 21 3"/></svg>'
 )
 _ICON_FILTER = (
-    '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" '
-    'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" '
+    'stroke-width="2.1" stroke-linecap="round" aria-hidden="true">'
     '<path d="M4 6h16M7 12h10M10 18h4"/></svg>'
 )
 _ICON_CHEVRON_DOWN = (
-    '<svg class="filter-chevron" viewBox="0 0 24 24" width="15" height="15" fill="none" '
-    'stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<svg class="filter-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" '
+    'stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
     '<path d="m6 9 6 6 6-6"/></svg>'
 )
 _ICON_CHEVRON_LEFT = (
-    '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" '
-    'stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" '
+    'stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
     '<path d="m15 18-6-6 6-6"/></svg>'
 )
 _ICON_CHEVRON_RIGHT = (
-    '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" '
-    'stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" '
+    'stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
     '<path d="m9 18 6-6-6-6"/></svg>'
 )
 _ICON_SHARE = (
     '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" '
-    'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    'stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
     '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>'
     '<path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>'
 )
@@ -86,18 +88,12 @@ _ICON_TRASH = (
     '<path d="M3 6h18M8 6V4h8v2M6 6v14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V6"/></svg>'
 )
 _ICON_BELL = (
-    '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" '
+    '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" '
     'stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
     '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>'
     '<path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>'
 )
-_PAGE_SHELL_BG = """
-    <div class="background" aria-hidden="true">
-      <div class="glow glow-a"></div>
-      <div class="glow glow-b"></div>
-      <div class="grid"></div>
-    </div>
-""".strip()
+_PAGE_SHELL_BG = ""
 
 
 @dataclass(frozen=True)
@@ -217,15 +213,17 @@ def _render_topbar(
 
     return f"""
       <header class="topbar">
-        <a class="brand" href="/">
-          <div class="brand-mark">{_ICON_PAW}</div>
-          <div>
-            <h1>{escape(title)}</h1>
-            <p>{escape(subtitle)}</p>
-          </div>
-        </a>
-        {nav_html}
-        {account_html}
+        <div class="topbar-inner">
+          <a class="brand" href="/">
+            <div class="brand-mark">{_ICON_PAW}</div>
+            <div>
+              <h1>{escape(title)}</h1>
+              <p>{escape(subtitle)}</p>
+            </div>
+          </a>
+          {nav_html}
+          {account_html}
+        </div>
       </header>"""
 
 
@@ -378,13 +376,13 @@ def _render_ecosystem_section(
     filter_hidden_inputs: str,
     provider_disclaimer: str,
 ) -> str:
-    """Render compact PuppyPing alert signup bar."""
+    """Render subtle editorial PuppyPing alert signup footer."""
     return f"""
-      <section class="ecosystem" aria-label="PuppyPing ecosystem">
+      <footer class="ecosystem" aria-label="PuppyPing email alerts">
         <div class="ecosystem-info">
           <div class="ecosystem-head">
             <span class="ecosystem-icon" aria-hidden="true">{_ICON_BELL}</span>
-            <h3>Get PuppyPing Alerts</h3>
+            <h3>Daily PuppyPing Alerts</h3>
           </div>
           <p class="ecosystem-copy">
             Join the PuppyPing email list for newly spotted adoptable puppies. {escape(provider_disclaimer)}
@@ -407,7 +405,7 @@ def _render_ecosystem_section(
             <button class="btn subscribe" type="submit">Join</button>
           </div>
         </form>
-      </section>
+      </footer>
     """
 
 
@@ -576,18 +574,6 @@ def _render_page(
         signin_next="/",
         signout_next="/",
     )
-    onboarding_intro_html = (
-        ""
-        if signed_in_email
-        else """
-      <section class="hero hero-compact" aria-label="How PupSwipe works">
-        <span class="hero-kicker">How It Works</span>
-        <p class="hero-copy">
-          Swipe right to like, left to pass &mdash; sign in anytime to save favorites across devices.
-        </p>
-      </section>
-    """
-    )
 
     try:
         total = _count_puppies(
@@ -642,10 +628,8 @@ def _render_page(
 <html lang="en">
 {_head_html("PupSwipe | PuppyPing")}
   <body class="swipe-page">
-    {_PAGE_SHELL_BG}
+    {topbar_html}
     <div class="app">
-      {topbar_html}
-      {onboarding_intro_html}
       <main class="swipe-main">
         <section class="stack">
           <div class="state state-error">Failed to load puppies: {escape(str(exc))}</div>
@@ -723,10 +707,8 @@ def _render_page(
 <html lang="en">
 {_head_html("PupSwipe | PuppyPing")}
   <body class="swipe-page">
-    {_PAGE_SHELL_BG}
+    {topbar_html}
     <div class="app">
-      {topbar_html}
-      {onboarding_intro_html}
       <main class="swipe-main">
         {filter_bar}
         <section class="stack">
@@ -781,10 +763,8 @@ def _render_page(
 <html lang="en">
 {_head_html("PupSwipe | PuppyPing")}
   <body class="swipe-page">
-    {_PAGE_SHELL_BG}
+    {topbar_html}
     <div class="app">
-      {topbar_html}
-      {onboarding_intro_html}
       <main class="swipe-main">
         {filter_bar}
         <section class="stack">
@@ -854,10 +834,12 @@ def _render_page(
             f' data-photos="{escape(json.dumps(photo_urls))}"'
             f' data-photo-index="{current_photo_index}"'
         )
+        card_classes = "card enter has-photo"
     else:
         initials = _safe_initials(raw_name, "PUP")
         image_block = f'<div class="photo-fallback">{initials}</div>'
         photo_data_attrs = ""
+        card_classes = "card enter"
 
     has_carousel = photo_count > 1
     carousel_pin_url_html = (
@@ -913,17 +895,15 @@ def _render_page(
 <html lang="en">
 {_head_html("PupSwipe | PuppyPing")}
   <body class="swipe-page">
-    {_PAGE_SHELL_BG}
+    {topbar_html}
 
     <div class="app">
-      {topbar_html}
-      {onboarding_intro_html}
       {info_msg}
 
       <main class="swipe-main">
         {filter_bar}
         <section class="stack">
-          <article id="swipe-card" class="card enter" data-swipe-threshold="110">
+          <article id="swipe-card" class="{card_classes}" data-swipe-threshold="110">
             <div class="{photo_container_class}"{photo_data_attrs}>
               {image_block}
               {carousel_controls}
@@ -931,19 +911,20 @@ def _render_page(
               <div class="swipe-indicator nope">Pass</div>
             </div>
             <div class="card-body">
-              <div class="card-title">
-                <h2>{name}</h2>
-                <span class="age-pill">{age_raw}</span>
+              <div class="card-eyebrow">
+                <span class="live-dot" aria-hidden="true"></span>
+                <span class="card-status">{status}</span>
+                <span class="eyebrow-sep" aria-hidden="true">&middot;</span>
+                <span class="card-provider">{provider_name}</span>
               </div>
-              <div class="card-facts">
-                <span>{species_display}</span>
-                <span>{breed}</span>
-                <span>{gender}</span>
-                <span>{location}</span>
-              </div>
-              <div class="badges">
-                <span class="badge">{status}</span>
-                <span class="badge badge-provider">{provider_name}</span>
+              <div class="card-identity">
+                <div class="card-title">
+                  <h2>{name}</h2>
+                  <span class="age-pill">{age_raw}</span>
+                </div>
+                <p class="card-facts-line">
+                  <strong>{breed}</strong> &middot; {gender} &middot; {species_display} &middot; {location}
+                </p>
               </div>
               <div class="description-wrap">
                 <h3 class="description-label">Description</h3>
@@ -1067,7 +1048,7 @@ def _render_catalog_page(
     topbar_html = _render_topbar(
         active_nav="catalog",
         title="Pet Catalog",
-        subtitle="Available pets across providers",
+        subtitle="PupSwipe by PuppyPing",
         signed_in_email=signed_in_email,
         signin_next="/catalog",
         signout_next="/catalog",
@@ -1130,17 +1111,14 @@ def _render_catalog_page(
         pet_species = (
             " ".join(str(pup.get("species") or "pet").split()).strip().lower() or "pet"
         )
-        species_badge = escape(pet_species.title())
         pet_breed = escape(str(pup.get("breed") or "Unknown breed"))
         pet_age = escape(str(pup.get("age_raw") or "Age unknown"))
         pet_location = escape(str(pup.get("location") or "Unknown location"))
-        pet_status = escape(str(pup.get("status") or "Status unknown"))
         raw_profile_url = str(pup.get("url") or "").strip()
         profile_url = escape(raw_profile_url or "#")
         source_key = str(pup.get("source")) if pup.get("source") is not None else None
         provider_name = escape(_provider_name(source_key, raw_profile_url))
         swipe_source = " ".join((source_key or "").split()).strip()
-        scraped_at_copy = escape(_format_liked_time(pup.get("scraped_at_utc")))
 
         photo_url = _get_primary_image(pup)
         if photo_url:
@@ -1164,32 +1142,29 @@ def _render_catalog_page(
           <article class="liked-card catalog-card">
             <div class="liked-photo">
               {image_html}
-              <span class="photo-chip">{species_badge}</span>
+              <form class="inline-form catalog-like-form" method="post" action="/catalog/like">
+                <input type="hidden" name="pet_id" value="{pet_id}" />
+                <input type="hidden" name="pet_species" value="{escape(pet_species)}" />
+                <input type="hidden" name="source" value="{escape(swipe_source)}" />
+                {catalog_filter_hidden_inputs_html}
+                {catalog_filter_hash_inputs_html}
+                <button
+                  class="catalog-heart-btn"
+                  type="submit"
+                  aria-label="Like {pet_name}"
+                  title="Like {pet_name}"
+                >{_ICON_HEART_OUTLINE}</button>
+              </form>
             </div>
             <div class="liked-body">
               <div class="card-title-compact">
                 <h3>{pet_name}</h3>
                 <span class="age-pill">{pet_age}</span>
               </div>
-              <p class="liked-meta">{species_badge} &middot; {pet_breed} &middot; {pet_age} &middot; {pet_location}</p>
-              <div class="badges">
-                <span class="badge">{pet_status}</span>
-                <span class="badge badge-provider">{provider_name}</span>
-              </div>
-              <div class="card-footnote">
-                <span class="liked-time">Updated at {scraped_at_copy}</span>
-                <span class="liked-id">Pet ID: {pet_id}</span>
-              </div>
+              <p class="liked-meta">{pet_breed} &middot; {pet_location}</p>
               <div class="liked-actions">
+                <span class="card-shelter">{provider_name}</span>
                 {link_html}
-                <form class="inline-form" method="post" action="/catalog/like">
-                  <input type="hidden" name="pet_id" value="{pet_id}" />
-                  <input type="hidden" name="pet_species" value="{escape(pet_species)}" />
-                  <input type="hidden" name="source" value="{escape(swipe_source)}" />
-                  {catalog_filter_hidden_inputs_html}
-                  {catalog_filter_hash_inputs_html}
-                  <button class="btn like" type="submit"><span class="btn-icon" aria-hidden="true">{_ICON_HEART}</span>Like</button>
-                </form>
               </div>
             </div>
           </article>
@@ -1218,9 +1193,8 @@ def _render_catalog_page(
 <html lang="en">
 {_head_html("Pet Catalog | PupSwipe")}
   <body class="catalog-page">
-    {_PAGE_SHELL_BG}
+    {topbar_html}
     <div class="app">
-      {topbar_html}
       {info_msg}
       <main>
         {filter_bar}
@@ -1277,9 +1251,8 @@ def _render_signin_page(
 <html lang="en">
 {_head_html("Sign In | PupSwipe")}
   <body class="signin-page">
-    {_PAGE_SHELL_BG}
+    {topbar_html}
     <div class="app">
-      {topbar_html}
       {info_msg}
       <main>
         <section class="auth-shell">
@@ -1348,9 +1321,8 @@ def _render_forgot_password_page(
 <html lang="en">
 {_head_html("Forgot Password | PupSwipe")}
   <body>
-    {_PAGE_SHELL_BG}
+    {topbar_html}
     <div class="app">
-      {topbar_html}
       {info_msg}
       <main>
         <section class="auth-shell">
@@ -1412,9 +1384,8 @@ def _render_forgot_password_reset_page(
 <html lang="en">
 {_head_html("Set New Password | PupSwipe")}
   <body>
-    {_PAGE_SHELL_BG}
+    {topbar_html}
     <div class="app">
-      {topbar_html}
       {info_msg}
       <main>
         <section class="auth-shell">
@@ -1485,9 +1456,8 @@ def _render_reset_password_page(
 <html lang="en">
 {_head_html("Reset Password | PupSwipe")}
   <body>
-    {_PAGE_SHELL_BG}
+    {topbar_html}
     <div class="app">
-      {topbar_html}
       {info_msg}
       <main>
         <section class="auth-shell">
@@ -1747,7 +1717,6 @@ def _render_likes_page(
         status = escape(str(pup.get("status") or "Status unknown"))
         is_available_now = _is_liked_pet_available(pup)
         card_class = "liked-card" if is_available_now else "liked-card is-unavailable"
-        liked_at = escape(_format_liked_time(pup.get("liked_at_utc")))
         raw_profile_url = str(pup.get("url") or "").strip()
         profile_url = escape(raw_profile_url or "#")
         source_key = str(pup.get("source")) if pup.get("source") is not None else None
@@ -1764,6 +1733,24 @@ def _render_likes_page(
         else:
             initials = _safe_initials(raw_name, "PUP")
             image_html = f'<div class="photo-fallback">{initials}</div>'
+
+        if is_available_now:
+            eyebrow_html = (
+                f'<div class="card-eyebrow">'
+                f'<span class="live-dot" aria-hidden="true"></span>'
+                f"<span>{status}</span>"
+                f'<span class="eyebrow-sep" aria-hidden="true">&middot;</span>'
+                f"<span>{provider_name}</span>"
+                f"</div>"
+            )
+        else:
+            eyebrow_html = (
+                f'<div class="card-eyebrow">'
+                f'<span class="badge badge-unavailable">No longer available</span>'
+                f'<span class="eyebrow-sep" aria-hidden="true">&middot;</span>'
+                f"<span>{provider_name}</span>"
+                f"</div>"
+            )
 
         remove_form_html = f"""
                 <form class="inline-form" method="post" action="/likes/remove">
@@ -1820,20 +1807,12 @@ def _render_likes_page(
           <article class="{card_class}">
             <div class="liked-photo">{image_html}</div>
             <div class="liked-body">
+              {eyebrow_html}
               <div class="card-title-compact">
                 <h3>{name}</h3>
                 <span class="age-pill">{age_raw}</span>
               </div>
-              <p class="liked-meta">{breed} &middot; {age_raw} &middot; {location}</p>
-              <div class="badges">
-                <span class="badge">{status}</span>
-                <span class="badge badge-provider">{provider_name}</span>
-                {'<span class="badge badge-unavailable">No longer available</span>' if not is_available_now else ''}
-              </div>
-              <div class="card-footnote">
-                <span class="liked-time">Liked at {liked_at}</span>
-                <span class="liked-id">Pet ID: {dog_id}</span>
-              </div>
+              <p class="liked-meta">{breed} &middot; {location}</p>
               {share_actions_html}
             </div>
           </article>
@@ -1854,7 +1833,7 @@ def _render_likes_page(
     topbar_html = _render_topbar(
         active_nav="likes",
         title="Liked Puppies",
-        subtitle="Your saved favorites",
+        subtitle="PupSwipe by PuppyPing",
         signed_in_email=email,
         signout_next="/signin",
     )
@@ -1863,9 +1842,8 @@ def _render_likes_page(
 <html lang="en">
 {_head_html("Liked Puppies | PupSwipe")}
   <body class="likes-page">
-    {_PAGE_SHELL_BG}
+    {topbar_html}
     <div class="app">
-      {topbar_html}
       {info_msg}
       <main>
         {likes_filter_bar}

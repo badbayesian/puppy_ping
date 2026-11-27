@@ -1541,3 +1541,111 @@ def test_filter_drawer_uses_span_inside_summary_and_stays_collapsed_on_home(
         1
     ].split("</summary>", 1)[0]
     assert "<div" not in likes_summary
+
+
+def test_render_page_uses_editorial_layout_without_blobs_or_onboarding_banner(
+    monkeypatch,
+):
+    monkeypatch.setattr(pupswipe, "_count_puppies", lambda **_kwargs: 1)
+    monkeypatch.setattr(pupswipe, "_count_unseen_puppies", lambda **_kwargs: 1)
+    monkeypatch.setattr(
+        pupswipe,
+        "_fetch_puppies",
+        lambda limit, **_kwargs: [
+            {
+                "dog_id": 201,
+                "url": "https://example.com/dog/201",
+                "name": "Hazel",
+                "breed": "Beagle Mix",
+                "gender": "Female",
+                "age_raw": "5 months",
+                "location": "Chicago, IL",
+                "status": "Available",
+                "description": "Curious and friendly.",
+                "media": {"images": ["https://example.com/hazel.jpg"]},
+                "source": "paws_chicago",
+            }
+        ],
+    )
+
+    with_photo_html = pupswipe._render_page().decode("utf-8")
+    assert 'class="glow' not in with_photo_html
+    assert 'class="grid"' not in with_photo_html
+    assert "How It Works" not in with_photo_html
+    assert 'class="card enter has-photo"' in with_photo_html
+
+    monkeypatch.setattr(
+        pupswipe,
+        "_fetch_puppies",
+        lambda limit, **_kwargs: [
+            {
+                "dog_id": 202,
+                "url": "https://example.com/dog/202",
+                "name": "Bramble",
+                "breed": "Terrier",
+                "gender": "Male",
+                "age_raw": "4 months",
+                "location": "Chicago, IL",
+                "status": "Available",
+                "description": "No photo fallback test.",
+                "media": {"images": []},
+                "source": "anti_cruelty",
+            }
+        ],
+    )
+    no_photo_html = pupswipe._render_page().decode("utf-8")
+    assert 'class="card enter"' in no_photo_html
+    assert "has-photo" not in no_photo_html
+
+
+def test_render_catalog_page_declutters_cards_and_uses_floating_like_heart():
+    html = pupswipe._render_catalog_page(
+        puppies=[
+            {
+                "pet_id": 502,
+                "species": "cat",
+                "url": "https://example.com/cat/502",
+                "name": "Pip",
+                "breed": "Domestic Shorthair",
+                "age_raw": "10 months",
+                "location": "Chicago, IL",
+                "status": "Available",
+                "media": {"images": ["https://example.com/pip.jpg"]},
+                "source": "paws_chicago",
+                "scraped_at_utc": "2026-02-15T12:00:00+00:00",
+            }
+        ],
+        total_available=1,
+    ).decode("utf-8")
+
+    assert 'class="catalog-heart-btn"' in html
+    assert 'class="photo-chip"' not in html
+    assert "Updated at" not in html
+    assert "Pet ID:" not in html
+    assert "Domestic Shorthair &middot; Chicago, IL" in html
+
+
+def test_render_likes_page_declutters_metadata_clutter():
+    html = pupswipe._render_likes_page(
+        email="person@gmail.com",
+        puppies=[
+            {
+                "dog_id": 8,
+                "species": "dog",
+                "name": "Clover",
+                "breed": "Corgi Mix",
+                "age_raw": "6 months",
+                "location": "Chicago, IL",
+                "status": "Available",
+                "liked_at_utc": "2026-02-14T00:00:00+00:00",
+                "url": "https://example.com/pets/8",
+                "source": "wright_way",
+                "media": {"images": ["https://example.com/clover.jpg"]},
+            }
+        ],
+        total_likes=1,
+    ).decode("utf-8")
+
+    assert "Liked at" not in html
+    assert "Pet ID:" not in html
+    assert "Corgi Mix &middot; Chicago, IL" in html
