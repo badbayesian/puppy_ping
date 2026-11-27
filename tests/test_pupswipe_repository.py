@@ -1,5 +1,7 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+
+import pytest
 
 import puppyping.pupswipe.repository as repository
 
@@ -73,8 +75,14 @@ def test_upsert_user_handles_insert_race_by_locking_existing_row(monkeypatch):
                 "fetchone": (7, "person@example.com", "existing-hash", now, now),
             },
             {
-                "columns": ["id", "email", "created_at_utc", "last_seen_at_utc"],
-                "fetchone": (7, "person@example.com", now, now),
+                "columns": [
+                    "id",
+                    "email",
+                    "created_at_utc",
+                    "last_seen_at_utc",
+                    "session_version",
+                ],
+                "fetchone": (7, "person@example.com", now, now, 2),
             },
         ]
     )
@@ -102,6 +110,7 @@ def test_upsert_user_handles_insert_race_by_locking_existing_row(monkeypatch):
     assert "SET last_seen_at_utc = %s" in executed_sql
     assert user["id"] == 7
     assert user["email"] == "person@example.com"
+    assert user["session_version"] == 2
     assert conn.commits == 1
 
 
@@ -110,8 +119,14 @@ def test_get_user_by_id_is_read_only(monkeypatch):
     conn = DummyConn(
         steps=[
             {
-                "columns": ["id", "email", "created_at_utc", "last_seen_at_utc"],
-                "fetchone": (9, "reader@example.com", now, now),
+                "columns": [
+                    "id",
+                    "email",
+                    "created_at_utc",
+                    "last_seen_at_utc",
+                    "session_version",
+                ],
+                "fetchone": (9, "reader@example.com", now, now, 3),
             }
         ]
     )
@@ -124,12 +139,124 @@ def test_get_user_by_id_is_read_only(monkeypatch):
 
     assert user["id"] == 9
     assert user["email"] == "reader@example.com"
+    assert user["session_version"] == 3
     assert conn.commits == 0
     assert len(conn.cursor_obj.executed) == 1
     query, params = conn.cursor_obj.executed[0]
     assert "SELECT id, email, created_at_utc, last_seen_at_utc" in query
     assert "UPDATE users" not in query
     assert params == (9,)
+
+
+def test_update_user_password_increments_session_version(monkeypatch):
+    conn = DummyConn(
+        steps=[
+            {"fetchone": ("stored-hash", 3)},
+            {"fetchone": (4,)},
+        ]
+    )
+    monkeypatch.setattr(
+        repository,
+        "verify_password",
+        lambda password, password_hash: password == "oldpass123"
+        and password_hash == "stored-hash",
+    )
+    monkeypatch.setattr(
+        repository, "hash_password", lambda password: f"hashed:{password}"
+    )
+
+    new_version = repository.update_user_password(
+        5,
+        "oldpass123",
+        "newpass123",
+        expected_session_version=3,
+        connection_factory=lambda: conn,
+        ensure_schema_fn=None,
+    )
+
+    assert new_version == 4
+    assert conn.commits == 1
+    select_sql, select_params = conn.cursor_obj.executed[0]
+    assert "FOR UPDATE" in select_sql
+    assert select_params == (5,)
+    update_sql, update_params = conn.cursor_obj.executed[1]
+    assert "session_version = COALESCE(session_version, 1) + 1" in update_sql
+    assert "COALESCE(session_version, 1) = %s" in update_sql
+    assert update_params[0] == "hashed:newpass123"
+    assert update_params[2:] == (5, 3)
+
+
+def test_update_user_password_rejects_stale_session_version(monkeypatch):
+    conn = DummyConn(steps=[{"fetchone": ("stored-hash", 4)}])
+    monkeypatch.setattr(
+        repository,
+        "verify_password",
+        lambda password, password_hash: True,
+    )
+
+    with pytest.raises(ValueError, match="Session expired"):
+        repository.update_user_password(
+            5,
+            "oldpass123",
+            "newpass123",
+            expected_session_version=3,
+            connection_factory=lambda: conn,
+            ensure_schema_fn=None,
+        )
+
+    assert conn.commits == 0
+    assert len(conn.cursor_obj.executed) == 1
+
+    conn_no_row = DummyConn(
+        steps=[
+            {"fetchone": ("stored-hash", 3)},
+            {"fetchone": None},
+        ]
+    )
+    monkeypatch.setattr(
+        repository, "hash_password", lambda password: f"hashed:{password}"
+    )
+
+    with pytest.raises(ValueError, match="Session expired"):
+        repository.update_user_password(
+            5,
+            "oldpass123",
+            "newpass123",
+            expected_session_version=3,
+            connection_factory=lambda: conn_no_row,
+            ensure_schema_fn=None,
+        )
+
+    assert conn_no_row.commits == 0
+
+
+def test_consume_password_reset_token_increments_session_version(monkeypatch):
+    now = datetime.now(timezone.utc)
+    conn = DummyConn(
+        steps=[
+            {"fetchone": (12, 8, now + timedelta(minutes=15), None)},
+            {},
+            {},
+            {},
+        ]
+    )
+    monkeypatch.setattr(
+        repository, "hash_password", lambda password: f"hashed:{password}"
+    )
+
+    user_id = repository.consume_password_reset_token(
+        "raw-token",
+        "newpass123",
+        connection_factory=lambda: conn,
+        ensure_schema_fn=None,
+    )
+
+    assert user_id == 8
+    assert conn.commits == 1
+    update_sql, update_params = conn.cursor_obj.executed[1]
+    assert "session_version = COALESCE(session_version, 1) + 1" in update_sql
+    assert update_params[0] == "hashed:newpass123"
+    assert update_params[2] == 8
 
 
 def test_fetch_liked_puppies_filters_before_limit_and_offset():

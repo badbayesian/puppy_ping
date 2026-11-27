@@ -13,13 +13,14 @@ import hmac
 import json
 from datetime import datetime
 from http.cookies import SimpleCookie
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from puppyping.db import add_email_subscriber, get_connection
 from puppyping.email_utils import is_valid_email, normalize_email
 import puppyping.pupswipe.pages as pages
 from puppyping.pupswipe.auth import (
+    decode_session_token,
     decode_session_value,
     encode_session_value,
     hash_password,
@@ -90,6 +91,22 @@ _ensure_app_schema = repo_ensure_app_schema
 
 FILTER_COOKIE_NAME = "pupswipe_filters"
 CATALOG_PAGE_SIZE = 200
+MAX_REQUEST_BODY_BYTES = 64 * 1024
+MAX_FILTER_COOKIE_LENGTH = 2048
+_HEX_DIGITS = frozenset("0123456789abcdef")
+ALLOWED_STATIC_ASSETS: dict[str, tuple[str, str]] = {
+    "/styles.css": ("styles.css", "text/css; charset=utf-8"),
+    "/swipe.js": ("swipe.js", "application/javascript; charset=utf-8"),
+}
+HEAD_OK_PATHS = frozenset(
+    {
+        "/",
+        "/index.html",
+        "/catalog",
+        "/signin",
+        "/forgot-password",
+    }
+)
 
 
 def _normalize_breed_filter(value: str | None) -> str:
@@ -164,18 +181,22 @@ def _encode_filter_cookie_value(payload: dict[str, str | float]) -> str:
 
 def _decode_filter_cookie_value(raw_value: str | None) -> dict[str, str | float] | None:
     """Decode and verify signed filter cookie payload."""
-    value = (raw_value or "").strip()
-    if "." not in value:
-        return None
-    encoded, signature = value.split(".", 1)
-    expected = hmac.new(
-        session_secret().encode("utf-8"),
-        encoded.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-    if not hmac.compare_digest(signature, expected):
-        return None
     try:
+        value = (raw_value or "").strip()
+        if not value or len(value) > MAX_FILTER_COOKIE_LENGTH or "." not in value:
+            return None
+        encoded, signature = value.split(".", 1)
+        if not encoded or not encoded.isascii():
+            return None
+        if len(signature) != 64 or not all(ch in _HEX_DIGITS for ch in signature):
+            return None
+        expected = hmac.new(
+            session_secret().encode("utf-8"),
+            encoded.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            return None
         padding = "=" * (-len(encoded) % 4)
         decoded = base64.urlsafe_b64decode(encoded + padding).decode("utf-8")
         parsed = json.loads(decoded)
@@ -429,6 +450,7 @@ _password_reset_token_hash = password_reset_token_hash
 _send_password_reset_email = send_password_reset_email
 _normalize_next_path = normalize_next_path
 _encode_session_value = encode_session_value
+_decode_session_token = decode_session_token
 _decode_session_value = decode_session_value
 
 
@@ -495,12 +517,19 @@ def _get_user_by_id(user_id: int) -> dict | None:
     )
 
 
-def _update_user_password(user_id: int, current_password: str, new_password: str) -> None:
+def _update_user_password(
+    user_id: int,
+    current_password: str,
+    new_password: str,
+    *,
+    expected_session_version: int | None = None,
+) -> int:
     """Verify current password and replace it with a new password hash."""
-    repo_update_user_password(
+    return repo_update_user_password(
         user_id,
         current_password,
         new_password,
+        expected_session_version=expected_session_version,
         connection_factory=get_connection,
         ensure_schema_fn=None,
     )
@@ -758,20 +787,26 @@ def _render_catalog_page(
     )
 
 
-class AppHandler(SimpleHTTPRequestHandler):
+class AppHandler(BaseHTTPRequestHandler):
     """HTTP handler for PupSwipe API and server-rendered pages."""
 
-    def __init__(self, *args, **kwargs):
-        """Initialize the handler with the app directory as static root.
+    timeout = 30
 
-        Args:
-            *args: Positional arguments passed to the base handler.
-            **kwargs: Keyword arguments passed to the base handler.
-        """
-        super().__init__(*args, directory=str(APP_DIR), **kwargs)
+    def send_header(self, keyword: str, value: str) -> None:
+        """Reject CR/LF header injection before writing an HTTP header."""
+        keyword_text = str(keyword)
+        value_text = str(value)
+        if (
+            "\r" in keyword_text
+            or "\n" in keyword_text
+            or "\r" in value_text
+            or "\n" in value_text
+        ):
+            raise ValueError("HTTP header names and values must not contain CR/LF.")
+        super().send_header(keyword, value)
 
     def end_headers(self):
-        """Attach client hint headers before completing the response.
+        """Attach client hint and security headers before completing the response.
 
         Returns:
             None.
@@ -780,6 +815,9 @@ class AppHandler(SimpleHTTPRequestHandler):
             "Accept-CH",
             "Viewport-Width, Sec-CH-Viewport-Width, Width, DPR, Sec-CH-UA, Sec-CH-UA-Platform, Sec-CH-UA-Mobile",
         )
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
         super().end_headers()
 
     def _send_json(self, status: int, payload: dict) -> None:
@@ -822,11 +860,67 @@ class AppHandler(SimpleHTTPRequestHandler):
         self.send_header("Location", location)
         self.end_headers()
 
-    def _read_form(self) -> dict[str, list[str]]:
+    def _read_body(self) -> bytes | None:
+        """Read bounded request body bytes or write a 400/413 error."""
+        raw_length = self.headers.get("Content-Length")
+        if raw_length is None or not raw_length.strip():
+            length = 0
+        else:
+            stripped = raw_length.strip()
+            if not stripped.isascii() or not stripped.isdigit():
+                self.close_connection = True
+                self.send_error(400, "Invalid Content-Length")
+                return None
+            if len(stripped) > 20:
+                self.close_connection = True
+                self.send_error(413, "Payload Too Large")
+                return None
+            length = int(stripped)
+        if length > MAX_REQUEST_BODY_BYTES:
+            self.close_connection = True
+            self.send_error(413, "Payload Too Large")
+            return None
+        if not length:
+            return b""
+        try:
+            return self.rfile.read(length)
+        except TimeoutError:
+            self.close_connection = True
+            return None
+
+    def _read_form(self) -> dict[str, list[str]] | None:
         """Read and parse an application/x-www-form-urlencoded request body."""
-        length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(length).decode("utf-8") if length else ""
-        return parse_qs(body)
+        raw_body = self._read_body()
+        if raw_body is None:
+            return None
+        try:
+            decoded = raw_body.decode("utf-8")
+        except UnicodeDecodeError:
+            self.close_connection = True
+            self.send_error(400, "Invalid UTF-8 body")
+            return None
+        return parse_qs(decoded)
+
+    def _serve_static_asset(self, path: str, *, head_only: bool = False) -> None:
+        """Serve explicitly allowlisted static assets from APP_DIR."""
+        asset = ALLOWED_STATIC_ASSETS.get(path)
+        if asset is None:
+            self.send_error(404, "Not Found")
+            return
+        filename, content_type = asset
+        app_root = APP_DIR.resolve()
+        asset_path = (app_root / filename).resolve()
+        if asset_path.parent != app_root or not asset_path.is_file():
+            self.send_error(404, "Not Found")
+            return
+        data = asset_path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "public, max-age=300")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        if not head_only:
+            self.wfile.write(data)
 
     def _public_base_url(self) -> str:
         """Resolve the externally reachable base URL for email links."""
@@ -836,10 +930,13 @@ class AppHandler(SimpleHTTPRequestHandler):
         """Build an absolute URL from a site-relative path."""
         return build_public_url(path)
 
-    def _session_cookie_header(self, user_id: int) -> str:
+    def _session_cookie_header(self, user_id: int, session_version: int = 1) -> str:
         """Build Set-Cookie header value for a signed-in session."""
+        token_value = _encode_session_value(
+            user_id, session_version=session_version
+        )
         parts = [
-            f"{SESSION_COOKIE_NAME}={_encode_session_value(user_id)}",
+            f"{SESSION_COOKIE_NAME}={token_value}",
             "Path=/",
             "HttpOnly",
             "SameSite=Lax",
@@ -895,13 +992,22 @@ class AppHandler(SimpleHTTPRequestHandler):
 
     def _signed_in_user(self) -> dict | None:
         """Resolve signed-in user from session cookie."""
-        user_id = _decode_session_value(self._cookie_value(SESSION_COOKIE_NAME))
-        if user_id is None:
+        parsed = _decode_session_token(self._cookie_value(SESSION_COOKIE_NAME))
+        if parsed is None:
             return None
+        user_id, token_session_version = parsed
         try:
-            return _get_user_by_id(user_id)
+            user = _get_user_by_id(user_id)
         except Exception:
             return None
+        if not user:
+            return None
+        user_session_version = _safe_int(str(user.get("session_version", 1)), 1)
+        if user_session_version < 1:
+            user_session_version = 1
+        if user_session_version != token_session_version:
+            return None
+        return user
 
     def _filter_state_from_cookie(self) -> dict[str, str | float]:
         """Read normalized filter state from signed filter cookie."""
@@ -1398,7 +1504,31 @@ class AppHandler(SimpleHTTPRequestHandler):
             )
             return self._send_html(200, body)
 
-        return super().do_GET()
+        return self._serve_static_asset(parsed.path)
+
+    def do_HEAD(self):
+        """Handle HEAD requests for health checks, routes, and allowlisted assets."""
+        parsed = urlparse(self.path)
+        if parsed.path in ALLOWED_STATIC_ASSETS:
+            return self._serve_static_asset(parsed.path, head_only=True)
+        if parsed.path == "/api/health":
+            try:
+                _fetch_puppies(1)
+            except Exception:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            return
+        if parsed.path in HEAD_OK_PATHS:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            return
+        self.send_error(404, "Not Found")
 
     def do_POST(self):
         """Handle POST requests for subscriptions, swipes, and API writes.
@@ -1408,9 +1538,9 @@ class AppHandler(SimpleHTTPRequestHandler):
         """
         parsed = urlparse(self.path)
         if parsed.path == "/forgot-password":
-            length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(length).decode("utf-8") if length else ""
-            form = parse_qs(body)
+            form = self._read_form()
+            if form is None:
+                return
             email_raw = form.get("email", [""])[0]
             email = _normalize_email(email_raw)
             if not _is_valid_email(email):
@@ -1449,9 +1579,9 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
 
         if parsed.path == "/forgot-password/reset":
-            length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(length).decode("utf-8") if length else ""
-            form = parse_qs(body)
+            form = self._read_form()
+            if form is None:
+                return
             token = form.get("token", [""])[0].strip()
             new_password = form.get("new_password", [""])[0]
             confirm_password = form.get("confirm_password", [""])[0]
@@ -1481,14 +1611,15 @@ class AppHandler(SimpleHTTPRequestHandler):
 
             query = urlencode({"msg": "Password updated. Sign in with your new password."})
             self.send_response(303)
+            self.send_header("Set-Cookie", self._clear_session_cookie_header())
             self.send_header("Location", f"/signin?{query}")
             self.end_headers()
             return
 
         if parsed.path == "/signin":
-            length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(length).decode("utf-8") if length else ""
-            form = parse_qs(body)
+            form = self._read_form()
+            if form is None:
+                return
 
             email_raw = form.get("email", [""])[0]
             email = _normalize_email(email_raw)
@@ -1540,16 +1671,22 @@ class AppHandler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 return
 
+            session_version = _safe_int(str(user.get("session_version", 1)), 1)
+            if session_version < 1:
+                session_version = 1
             self.send_response(303)
-            self.send_header("Set-Cookie", self._session_cookie_header(user_id))
+            self.send_header(
+                "Set-Cookie",
+                self._session_cookie_header(user_id, session_version),
+            )
             self.send_header("Location", next_path)
             self.end_headers()
             return
 
         if parsed.path == "/signout":
-            length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(length).decode("utf-8") if length else ""
-            form = parse_qs(body)
+            form = self._read_form()
+            if form is None:
+                return
             next_path = _normalize_next_path(form.get("next", ["/signin"])[0], "/signin")
             self.send_response(303)
             self.send_header("Set-Cookie", self._clear_session_cookie_header())
@@ -1568,9 +1705,9 @@ class AppHandler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 return
 
-            length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(length).decode("utf-8") if length else ""
-            form = parse_qs(body)
+            form = self._read_form()
+            if form is None:
+                return
             current_password = form.get("current_password", [""])[0]
             new_password = form.get("new_password", [""])[0]
             confirm_password = form.get("confirm_password", [""])[0]
@@ -1594,8 +1731,18 @@ class AppHandler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 return
 
+            current_version = _safe_int(
+                str(current_user.get("session_version", 1)), 1
+            )
+            if current_version < 1:
+                current_version = 1
             try:
-                _update_user_password(user_id, current_password, new_password)
+                new_session_version = _update_user_password(
+                    user_id,
+                    current_password,
+                    new_password,
+                    expected_session_version=current_version,
+                )
             except Exception as exc:
                 query = urlencode({"msg": f"Failed to reset password: {exc}"})
                 self.send_response(303)
@@ -1603,8 +1750,15 @@ class AppHandler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 return
 
+            resolved_version = _safe_int(str(new_session_version or 1), 1)
+            if resolved_version < 1:
+                resolved_version = 1
             query = urlencode({"msg": "Password updated."})
             self.send_response(303)
+            self.send_header(
+                "Set-Cookie",
+                self._session_cookie_header(user_id, resolved_version),
+            )
             self.send_header("Location", f"/likes?{query}")
             self.end_headers()
             return
@@ -1620,9 +1774,9 @@ class AppHandler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 return
 
-            length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(length).decode("utf-8") if length else ""
-            form = parse_qs(body)
+            form = self._read_form()
+            if form is None:
+                return
             user_id = _safe_int(str(current_user.get("id")), 0)
             pet_id = _safe_int(form.get("pet_id", ["0"])[0], 0)
             pet_species = " ".join(form.get("pet_species", [""])[0].split()).strip()
@@ -1682,9 +1836,9 @@ class AppHandler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 return
 
-            length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(length).decode("utf-8") if length else ""
-            form = parse_qs(body)
+            form = self._read_form()
+            if form is None:
+                return
             user_id = _safe_int(str(current_user.get("id")), 0)
             mode = " ".join(form.get("mode", ["all"])[0].split()).strip().lower()
             only_unavailable = mode == "unavailable"
@@ -1745,9 +1899,9 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
 
         if parsed.path == "/catalog/like":
-            length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(length).decode("utf-8") if length else ""
-            form = parse_qs(body)
+            form = self._read_form()
+            if form is None:
+                return
             form_payload = {
                 key: values[0]
                 for key, values in form.items()
@@ -1826,9 +1980,9 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
 
         if parsed.path == "/subscribe":
-            length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(length).decode("utf-8") if length else ""
-            form = parse_qs(body)
+            form = self._read_form()
+            if form is None:
+                return
 
             photo_index = _safe_int(form.get("photo", ["0"])[0], 0)
             filter_hash = " ".join(form.get("f", [""])[0].split()).strip()
@@ -1887,9 +2041,9 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
 
         if parsed.path == "/swipe":
-            length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(length).decode("utf-8") if length else ""
-            form = parse_qs(body)
+            form = self._read_form()
+            if form is None:
+                return
             form_payload = {
                 key: values[0]
                 for key, values in form.items()
@@ -2005,12 +2159,16 @@ class AppHandler(SimpleHTTPRequestHandler):
             self.send_error(404, "Not Found")
             return
 
-        length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(length) if length else b"{}"
+        raw_body = self._read_body()
+        if raw_body is None:
+            return
+        body = raw_body or b"{}"
         try:
             payload = json.loads(body.decode("utf-8"))
-        except json.JSONDecodeError:
+        except (UnicodeDecodeError, json.JSONDecodeError):
             return self._send_json(400, {"error": "invalid json"})
+        if not isinstance(payload, dict):
+            return self._send_json(400, {"error": "json payload must be an object"})
 
         try:
             dog_id = int(payload.get("dog_id"))

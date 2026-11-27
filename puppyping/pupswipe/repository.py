@@ -74,8 +74,15 @@ def ensure_app_schema(conn) -> None:
                 email TEXT NOT NULL UNIQUE,
                 password_hash TEXT,
                 created_at_utc TIMESTAMPTZ NOT NULL,
-                last_seen_at_utc TIMESTAMPTZ NOT NULL
+                last_seen_at_utc TIMESTAMPTZ NOT NULL,
+                session_version INTEGER NOT NULL DEFAULT 1
             );
+            """
+        )
+        cur.execute(
+            """
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 1;
             """
         )
         cur.execute(
@@ -1146,6 +1153,7 @@ def consume_password_reset_token(
                 """
                 UPDATE users
                 SET password_hash = %s,
+                    session_version = COALESCE(session_version, 1) + 1,
                     last_seen_at_utc = %s
                 WHERE id = %s;
                 """,
@@ -1223,7 +1231,7 @@ def upsert_user(
                 )
                 VALUES (%s, %s, %s, %s)
                 ON CONFLICT (email) DO NOTHING
-                RETURNING id, email, created_at_utc, last_seen_at_utc;
+                RETURNING id, email, created_at_utc, last_seen_at_utc, session_version;
                 """,
                 (email, password_hash, now, now),
             )
@@ -1254,7 +1262,7 @@ def upsert_user(
                         SET password_hash = %s,
                             last_seen_at_utc = %s
                         WHERE id = %s
-                        RETURNING id, email, created_at_utc, last_seen_at_utc;
+                        RETURNING id, email, created_at_utc, last_seen_at_utc, session_version;
                         """,
                         (password_hash, now, user_id),
                     )
@@ -1264,7 +1272,7 @@ def upsert_user(
                         UPDATE users
                         SET last_seen_at_utc = %s
                         WHERE id = %s
-                        RETURNING id, email, created_at_utc, last_seen_at_utc;
+                        RETURNING id, email, created_at_utc, last_seen_at_utc, session_version;
                         """,
                         (now, user_id),
                     )
@@ -1286,7 +1294,7 @@ def get_user_by_id(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, email, created_at_utc, last_seen_at_utc
+                SELECT id, email, created_at_utc, last_seen_at_utc, session_version
                 FROM users
                 WHERE id = %s;
                 """,
@@ -1304,9 +1312,10 @@ def update_user_password(
     current_password: str,
     new_password: str,
     *,
+    expected_session_version: int | None = None,
     connection_factory: Callable = get_connection,
     ensure_schema_fn: Callable | None = ensure_app_schema,
-) -> None:
+) -> int:
     """Verify current password and replace it with a new password hash."""
     now = datetime.now(timezone.utc)
     with connection_factory() as conn:
@@ -1314,9 +1323,10 @@ def update_user_password(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT password_hash
+                SELECT password_hash, session_version
                 FROM users
-                WHERE id = %s;
+                WHERE id = %s
+                FOR UPDATE;
                 """,
                 (user_id,),
             )
@@ -1324,21 +1334,52 @@ def update_user_password(
             if not row:
                 raise ValueError("Account not found.")
             current_hash = str(row[0] or "")
+            current_version = int(row[1]) if len(row) > 1 and row[1] is not None else 1
+            if (
+                expected_session_version is not None
+                and current_version != expected_session_version
+            ):
+                raise ValueError("Session expired. Sign in again.")
             if not current_hash:
                 raise ValueError("Password is not set for this account.")
             if not verify_password(current_password, current_hash):
                 raise ValueError("Current password is incorrect.")
 
-            cur.execute(
-                """
-                UPDATE users
-                SET password_hash = %s,
-                    last_seen_at_utc = %s
-                WHERE id = %s;
-                """,
-                (hash_password(new_password), now, user_id),
-            )
+            if expected_session_version is not None:
+                cur.execute(
+                    """
+                    UPDATE users
+                    SET password_hash = %s,
+                        session_version = COALESCE(session_version, 1) + 1,
+                        last_seen_at_utc = %s
+                    WHERE id = %s
+                      AND COALESCE(session_version, 1) = %s
+                    RETURNING session_version;
+                    """,
+                    (
+                        hash_password(new_password),
+                        now,
+                        user_id,
+                        expected_session_version,
+                    ),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE users
+                    SET password_hash = %s,
+                        session_version = COALESCE(session_version, 1) + 1,
+                        last_seen_at_utc = %s
+                    WHERE id = %s
+                    RETURNING session_version;
+                    """,
+                    (hash_password(new_password), now, user_id),
+                )
+            updated = cur.fetchone()
+            if not updated:
+                raise ValueError("Session expired. Sign in again.")
         conn.commit()
+    return int(updated[0])
 
 
 def count_liked_puppies(

@@ -1,5 +1,19 @@
 # Operations
 
+## Production Tunnel & Debug Overlay
+
+When deploying PupSwipe behind Cloudflare Tunnel on an existing external `tunnel_public` Docker network, attach `compose.tunnel.yml` alongside `compose.yml` (in Portainer **Additional paths**, list `compose.tunnel.yml`) and keep `PUPSWIPE_BIND_IP=127.0.0.1` so the origin is not exposed on the LAN:
+
+```bash
+docker compose --env-file .env -f compose.yml -f compose.tunnel.yml up -d --build
+```
+
+`pgadmin` and raw host Postgres ports are disabled by default in `compose.yml`. Start `pgadmin` only on demand over localhost/SSH tunnel using the `debug` profile:
+
+```bash
+docker compose --env-file .env -f compose.yml --profile debug up -d pgadmin
+```
+
 ## Scraper Scheduling
 
 The production scraper container runs cron in foreground and schedules jobs internally.
@@ -64,6 +78,8 @@ Daily schedule example (1:30 AM, 30-day retention):
 
 Use `scripts/recover_live_db_from_available_sources.py` to merge legacy backup data plus
 diskcache sqlite data into the live `puppyping` Postgres schema using append + dedupe.
+
+> Note: Production `compose.yml` no longer publishes host port `5433:5432` by default. For host-side recovery runs targeting `127.0.0.1:5433`, add a temporary `127.0.0.1:5433:5432` override (or SSH port forward) before running steps 5–6 and remove it once finished.
 
 1. Ensure share access:
 
