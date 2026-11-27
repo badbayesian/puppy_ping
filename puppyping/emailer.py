@@ -5,13 +5,26 @@ import smtplib
 from datetime import datetime
 from email.message import EmailMessage
 from html import escape
-
 from typing import TYPE_CHECKING
+
 from .db import get_sent_pet_keys, mark_pet_profiles_emailed
 from .email_utils import sanitize_email
+from .pupswipe.config import provider_name
 
 if TYPE_CHECKING:
     from .models import PetProfile
+
+_DEFAULT_PUPSWIPE_URL = "https://puppyping.com"
+_RATING_ORDER = (
+    "children",
+    "dogs",
+    "cats",
+    "home_alone",
+    "activity",
+    "environment",
+    "human_sociability",
+    "enrichment",
+)
 
 
 def _profile_key(profile: "PetProfile") -> tuple[int, str]:
@@ -22,6 +35,82 @@ def _display_species(species: str | None) -> str:
     """Return species text for user-facing email content."""
     normalized = str(species or "").strip().lower() or "dog"
     return normalized.title()
+
+
+def _safe_http_url(url: object) -> str | None:
+    """Return a clean http(s) URL safe for email href/src attributes."""
+    if not isinstance(url, str):
+        return None
+    candidate = url.strip()
+    if not candidate or any(ch.isspace() for ch in candidate):
+        return None
+    lower = candidate.lower()
+    if lower.startswith("https://") or lower.startswith("http://"):
+        return candidate
+    return None
+
+
+def _pupswipe_url() -> str:
+    """Return the configured public PupSwipe URL with a safe production default."""
+    configured = _safe_http_url(os.environ.get("PUPSWIPE_PUBLIC_URL", ""))
+    return configured.rstrip("/") if configured else _DEFAULT_PUPSWIPE_URL
+
+
+def _valid_images(profile: "PetProfile") -> list[str]:
+    """Collect unique safe image URLs from a pet profile."""
+    if not profile.media or not profile.media.images:
+        return []
+    urls: list[str] = []
+    for raw_url in profile.media.images:
+        safe = _safe_http_url(raw_url)
+        if safe and safe not in urls:
+            urls.append(safe)
+    return urls
+
+
+def _format_age(profile: "PetProfile") -> str | None:
+    """Return human-friendly pet age if available."""
+    raw = " ".join(str(profile.age_raw or "").split()).strip()
+    if raw:
+        return raw
+    if profile.age_months is None:
+        return None
+    val = float(profile.age_months)
+    formatted = f"{val:.1f}".rstrip("0").rstrip(".")
+    return f"{formatted} mo"
+
+
+def _format_weight(weight_lbs: float | None) -> str | None:
+    """Return human-friendly pet weight if available."""
+    if weight_lbs is None:
+        return None
+    val = float(weight_lbs)
+    formatted = f"{val:.1f}".rstrip("0").rstrip(".")
+    return f"{formatted} lbs"
+
+
+def _format_rating_value(value: object) -> str:
+    """Format compatibility score for badge pills."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        num = float(value)
+        num_str = str(int(num)) if num.is_integer() else f"{num:g}"
+        if 0 <= num <= 5:
+            return f"{num_str}/5"
+        return num_str
+    return str(value)
+
+
+def _pet_initials(name: object) -> str:
+    """Build two-character uppercase initials for pets without photos."""
+    text = str(name or "").strip()
+    parts = [part for part in text.split() if part]
+    letters: list[str] = []
+    for part in parts[:2]:
+        for ch in part:
+            if ch.isalnum():
+                letters.append(ch.upper())
+                break
+    return "".join(letters)[:2] or "PP"
 
 
 def _render_full_profile_text(profile: "PetProfile") -> str:
@@ -60,6 +149,191 @@ def _partition_profiles_for_recipient(
         else:
             new_profiles.append(profile)
     return new_profiles, seen_profiles
+
+
+def _render_new_pet_card_html(profile: "PetProfile") -> str:
+    """Render a magazine-style card for one newly discovered pet."""
+    name_raw = str(profile.name or "Unnamed pet").strip() or "Unnamed pet"
+    pet_name = escape(name_raw)
+    provider = provider_name(getattr(profile, "source", None), profile.url)
+    status_text = " ".join(str(profile.status or "").split()).strip()
+    safe_url = _safe_http_url(profile.url)
+    images = _valid_images(profile)
+
+    hero_html = ""
+    if images:
+        hero_src = escape(images[0])
+        hero_html = (
+            '<tr><td style="padding:0;background-color:#ECE7DF;">'
+            f'<img src="{hero_src}" alt="{pet_name}" '
+            'style="display:block;width:100%;max-height:320px;'
+            'object-fit:cover;object-position:center 22%;border:0;" />'
+            "</td></tr>"
+        )
+
+    thumbs_html = ""
+    extra_images = images[1:3]
+    if extra_images:
+        thumb_tags = "".join(
+            f'<img src="{escape(url)}" alt="{pet_name} extra photo" '
+            'width="92" height="68" '
+            'style="display:inline-block;width:92px;height:68px;object-fit:cover;'
+            'border-radius:8px;margin-right:8px;background-color:#ECE7DF;border:0;" />'
+            for url in extra_images
+        )
+        thumbs_html = (
+            f'<tr><td style="padding:12px 22px 0 22px;">{thumb_tags}</td></tr>'
+        )
+
+    eyebrow_parts: list[str] = []
+    if status_text:
+        eyebrow_parts.append(
+            '<span style="display:inline-block;width:7px;height:7px;'
+            "border-radius:50%;background-color:#2F7A57;"
+            'margin-right:6px;vertical-align:middle;"></span>'
+            f'<span style="vertical-align:middle;">{escape(status_text)}</span>'
+        )
+    if provider:
+        eyebrow_parts.append(
+            f'<span style="vertical-align:middle;">{escape(provider)}</span>'
+        )
+    eyebrow_html = ""
+    if eyebrow_parts:
+        joined_eyebrow = ' <span style="color:#C4BBB0;">&middot;</span> '.join(
+            eyebrow_parts
+        )
+        eyebrow_html = (
+            '<div style="font-size:12px;font-weight:600;color:#5C544D;'
+            f'margin-bottom:4px;">{joined_eyebrow}</div>'
+        )
+
+    facts = [
+        _display_species(profile.species),
+        " ".join(str(profile.breed or "").split()).strip() or None,
+        " ".join(str(profile.gender or "").split()).strip() or None,
+        _format_age(profile),
+        _format_weight(profile.weight_lbs),
+        " ".join(str(profile.location or "").split()).strip() or None,
+    ]
+    fact_line = " &middot; ".join(escape(part) for part in facts if part)
+
+    rating_pills: list[str] = []
+    for key in _RATING_ORDER:
+        val = profile.ratings.get(key)
+        if val is None or str(val).strip() == "":
+            continue
+        label = escape(key.replace("_", " ").title())
+        val_display = escape(_format_rating_value(val))
+        rating_pills.append(
+            '<span style="display:inline-block;margin:0 6px 6px 0;padding:4px 9px;'
+            "border-radius:6px;background-color:#F6F2EC;color:#463F39;"
+            'font-size:12px;font-weight:600;">'
+            f'<span style="color:#8A8178;font-weight:500;">{label}</span> '
+            f"{val_display}</span>"
+        )
+    ratings_html = (
+        f'<div style="margin:0 0 10px 0;">{"".join(rating_pills)}</div>'
+        if rating_pills
+        else ""
+    )
+
+    desc = " ".join(str(profile.description or "").split()).strip()
+    if len(desc) > 420:
+        desc = desc[:417].rstrip() + "..."
+    bio_html = (
+        '<p style="margin:0 0 16px 0;font-size:14px;line-height:1.55;'
+        f'color:#463F39;">{escape(desc)}</p>'
+        if desc
+        else ""
+    )
+
+    cta_html = ""
+    if safe_url:
+        cta_label = (
+            f"View on {provider}"
+            if provider and provider != "Adoption Provider"
+            else "View profile"
+        )
+        cta_html = (
+            '<div><a href="' + escape(safe_url) + '" '
+            'style="display:inline-block;padding:11px 20px;border-radius:999px;'
+            "background-color:#D85A3F;color:#FFFFFF;font-size:13px;"
+            'font-weight:600;text-decoration:none;">'
+            f"{escape(cta_label)} &rarr;</a></div>"
+        )
+
+    return (
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        'style="background-color:#FFFFFF;border:1px solid #E8E2D9;border-radius:16px;'
+        'overflow:hidden;margin-bottom:18px;border-collapse:separate;">'
+        f"{hero_html}"
+        f"{thumbs_html}"
+        '<tr><td style="padding:18px 22px 22px 22px;">'
+        f"{eyebrow_html}"
+        "<h3 style=\"margin:0 0 6px 0;font-family:Georgia,'Times New Roman',serif;"
+        f'font-size:24px;line-height:1.15;font-weight:700;color:#1F1B18;">{pet_name}</h3>'
+        '<div style="font-size:13px;line-height:1.45;color:#5C544D;'
+        f'margin-bottom:12px;">{fact_line}</div>'
+        f"{ratings_html}"
+        f"{bio_html}"
+        f"{cta_html}"
+        "</td></tr></table>"
+    )
+
+
+def _render_seen_pet_row_html(profile: "PetProfile", *, is_last: bool) -> str:
+    """Render one compact list row for a previously sent pet."""
+    name_raw = str(profile.name or "Unnamed pet").strip() or "Unnamed pet"
+    pet_name = escape(name_raw)
+    images = _valid_images(profile)
+    safe_url = _safe_http_url(profile.url)
+
+    if images:
+        thumb_html = (
+            f'<img src="{escape(images[0])}" alt="{pet_name}" '
+            'width="44" height="44" '
+            'style="display:block;width:44px;height:44px;object-fit:cover;'
+            'border-radius:10px;background-color:#ECE7DF;border:0;" />'
+        )
+    else:
+        initials = escape(_pet_initials(name_raw))
+        thumb_html = (
+            '<div style="width:44px;height:44px;line-height:44px;text-align:center;'
+            "border-radius:10px;background-color:#F3EFE9;color:#7A7168;"
+            "font-family:Georgia,'Times New Roman',serif;font-size:14px;"
+            f'font-weight:700;">{initials}</div>'
+        )
+
+    facts = [
+        _display_species(profile.species),
+        " ".join(str(profile.breed or "").split()).strip() or None,
+        _format_age(profile),
+        " ".join(str(profile.status or "").split()).strip() or None,
+    ]
+    fact_line = " &middot; ".join(escape(part) for part in facts if part)
+
+    link_html = (
+        '<a href="' + escape(safe_url) + '" '
+        'style="color:#C84B31;font-size:12.5px;font-weight:600;'
+        'text-decoration:none;white-space:nowrap;">View &rarr;</a>'
+        if safe_url
+        else ""
+    )
+    row_border = "" if is_last else "border-bottom:1px solid #F2EDE6;"
+
+    return (
+        "<tr>"
+        f'<td style="width:56px;padding:12px 0 12px 16px;vertical-align:middle;{row_border}">{thumb_html}</td>'
+        f'<td style="padding:12px 12px;vertical-align:middle;{row_border}">'
+        '<div style="font-size:14px;font-weight:700;color:#1F1B18;'
+        f'line-height:1.25;">{pet_name}</div>'
+        '<div style="font-size:12.5px;color:#6B6259;margin-top:2px;'
+        f'line-height:1.35;">{fact_line}</div>'
+        "</td>"
+        f'<td style="padding:12px 16px 12px 4px;vertical-align:middle;text-align:right;{row_border}">'
+        f"{link_html}</td>"
+        "</tr>"
+    )
 
 
 def send_email(profiles: list["PetProfile"], send_to: str, send: bool = True) -> None:
@@ -107,128 +381,82 @@ def send_email(profiles: list["PetProfile"], send_to: str, send: bool = True) ->
     msg.set_content(text_body)
 
     # -------- html version --------
-    def fmt(v):
-        """Format optional values for display.
-
-        Args:
-            v: Value to format.
-
-        Returns:
-            Formatted string for HTML display.
-        """
-        return "--" if v is None else str(v)
-
-    order = [
-        "children",
-        "dogs",
-        "cats",
-        "home_alone",
-        "activity",
-        "environment",
-        "human_sociability",
-        "enrichment",
-    ]
-
-    full_cards = []
-    for p in new_profiles:
-        ratings_html = (
-            "".join(
-                f"<li><b>{escape(k.replace('_', ' ').title())}:</b> {escape(str(p.ratings.get(k)) if p.ratings.get(k) is not None else '--')}</li>"
-                for k in order
-                if k in p.ratings
-            )
-            or "<li>--</li>"
+    pupswipe_url = _pupswipe_url()
+    full_cards_html = "".join(_render_new_pet_card_html(p) for p in new_profiles)
+    if not full_cards_html:
+        full_cards_html = (
+            '<div style="background-color:#FFFFFF;border:1px solid #E8E2D9;'
+            "border-radius:16px;padding:18px 20px;font-size:14px;color:#5C544D;"
+            'margin-bottom:18px;">No new pets in this run.</div>'
         )
 
-        # show up to 3 images (email clients may block remote images until user clicks "display images")
-        imgs = "".join(
-            f'<div style="margin:8px 0;"><img src="{escape(u)}" style="max-width:480px;width:100%;height:auto;border-radius:8px;" /></div>'
-            for u in (p.media.images[:3] if p.media and p.media.images else [])
+    seen_section_html = ""
+    if seen_profiles:
+        seen_rows = "".join(
+            _render_seen_pet_row_html(p, is_last=(idx == len(seen_profiles) - 1))
+            for idx, p in enumerate(seen_profiles)
+        )
+        seen_section_html = (
+            '<div style="font-size:11px;font-weight:700;letter-spacing:0.08em;'
+            'text-transform:uppercase;color:#8A8178;margin:6px 0 10px 4px;">'
+            "Previously sent &middot; still available</div>"
+            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+            'style="background-color:#FFFFFF;border:1px solid #E8E2D9;'
+            "border-radius:16px;overflow:hidden;border-collapse:separate;"
+            f'margin-bottom:18px;">{seen_rows}</table>'
         )
 
-        desc = (p.description or "").strip()
-        if len(desc) > 600:
-            desc = desc[:599].rstrip() + "..."
-
-        full_cards.append(f"""
-        <div style="border:1px solid #e5e5e5;border-radius:12px;padding:14px;margin:14px 0;">
-          <div style="font-size:18px;font-weight:700;margin-bottom:6px;">
-            {escape(fmt(p.name))} <span style="color:#666;font-weight:400;">(#{p.pet_id})</span>
-          </div>
-
-          <div style="color:#333;line-height:1.4;">
-            <div><b>Species:</b> {escape(_display_species(p.species))}</div>
-            <div><b>Breed:</b> {escape(fmt(p.breed))}</div>
-            <div><b>Gender:</b> {escape(fmt(p.gender))}</div>
-            <div><b>Age:</b> {escape(fmt(p.age_months))} months</div>
-            <div><b>Weight:</b> {escape(fmt(p.weight_lbs))} lbs</div>
-            <div><b>Location:</b> {escape(fmt(p.location))}</div>
-            <div><b>Status:</b> {escape(fmt(p.status))}</div>
-          </div>
-
-          <div style="margin-top:10px;">
-            <div style="font-weight:700;">Ratings</div>
-            <ul style="margin:6px 0 0 18px;padding:0;">{ratings_html}</ul>
-          </div>
-
-          {imgs}
-
-          <div style="margin-top:10px;">
-            <div style="font-weight:700;">Profile</div>
-            <a href="{escape(p.url)}">{escape(p.url)}</a>
-          </div>
-
-          <div style="margin-top:10px;color:#666;font-size:12px;">
-            Scraped at: {escape(fmt(p.scraped_at_utc))} * Media: {escape(p.media.summary() if p.media else "--")}
-          </div>
-
-          {"<div style='margin-top:10px;'><div style='font-weight:700;'>Notes</div><div style='white-space:pre-wrap;'>" + escape(desc) + "</div></div>" if desc else ""}
-        </div>
-        """)
-
-    compact_cards: list[str] = []
-    for p in seen_profiles:
-        compact_cards.append(f"""
-            <div style="border:1px solid #ececec;border-radius:10px;padding:10px;margin:10px 0;">
-              <div style="font-size:16px;font-weight:700;">
-                {escape(fmt(p.name))} <span style="color:#666;font-weight:400;">(#{p.pet_id}, {escape(_display_species(p.species))})</span>
-              </div>
-              <div style="color:#333;line-height:1.4;font-size:14px;">
-                <b>Breed:</b> {escape(fmt(p.breed))} |
-                <b>Age:</b> {escape(fmt(p.age_months))} months |
-                <b>Status:</b> {escape(fmt(p.status))}
-              </div>
-              <div style="margin-top:6px;">
-                <a href="{escape(p.url)}">{escape(p.url)}</a>
-              </div>
-            </div>
-            """)
-
-    full_section_html = (
-        "<h3 style='margin:14px 0 8px;'>New pets (full details)</h3>"
-        + "".join(full_cards)
-        if full_cards
-        else "<h3 style='margin:14px 0 8px;'>New pets (full details)</h3><div>None in this run.</div>"
+    html_body = (
+        "<!doctype html>"
+        '<html><body style="margin:0;padding:0;background-color:#F3EFE9;'
+        "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,"
+        'Helvetica,Arial,sans-serif;color:#1F1B18;">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        'style="background-color:#F3EFE9;padding:24px 12px;">'
+        '<tr><td align="center">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        'style="max-width:600px;width:100%;text-align:left;">'
+        '<tr><td style="padding:0 4px 14px 4px;">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0">'
+        "<tr>"
+        '<td style="vertical-align:middle;">'
+        '<span style="display:inline-block;width:26px;height:26px;line-height:26px;'
+        "text-align:center;border-radius:8px;background-color:#D85A3F;color:#FFFFFF;"
+        'font-size:13px;font-weight:700;vertical-align:middle;margin-right:8px;">'
+        "P</span>"
+        "<span style=\"font-family:Georgia,'Times New Roman',serif;font-size:22px;"
+        'font-weight:700;color:#1F1B18;vertical-align:middle;">PuppyPing</span>'
+        "</td>"
+        '<td align="right" style="vertical-align:middle;">'
+        '<a href="' + escape(pupswipe_url) + '" '
+        'style="color:#C84B31;font-size:13px;font-weight:600;text-decoration:none;">'
+        "Open PupSwipe &rarr;</a>"
+        "</td>"
+        "</tr>"
+        "</table>"
+        '<div style="font-size:13px;color:#6B6259;margin-top:8px;">'
+        f"<strong>{len(new_profiles)} new</strong> &middot; "
+        f"{len(seen_profiles)} still available &middot; {escape(ts)}"
+        "</div>"
+        "</td></tr>"
+        "<tr><td>"
+        '<div style="font-size:11px;font-weight:700;letter-spacing:0.08em;'
+        'text-transform:uppercase;color:#8A8178;margin:0 0 10px 4px;">'
+        "New pets</div>"
+        f"{full_cards_html}"
+        f"{seen_section_html}"
+        '<div style="padding:8px 4px 0 4px;font-size:12px;color:#8A8178;'
+        'text-align:center;">'
+        "Sent by PuppyPing &middot; Browse all pets on "
+        '<a href="' + escape(pupswipe_url) + '" '
+        'style="color:#C84B31;text-decoration:none;font-weight:600;">PupSwipe</a>'
+        "</div>"
+        "</td></tr>"
+        "</table>"
+        "</td></tr>"
+        "</table>"
+        "</body></html>"
     )
-    compact_section_html = (
-        "<h3 style='margin:18px 0 8px;'>Previously sent pets (summary)</h3>"
-        + "".join(compact_cards)
-        if compact_cards
-        else ""
-    )
-
-    html_body = f"""
-    <html>
-      <body style="font-family:Arial,Helvetica,sans-serif;max-width:780px;margin:0 auto;padding:10px;">
-        <h2 style="margin:8px 0;">PuppyPing -- Adoptable Pets</h2>
-        <div style="color:#666;margin-bottom:14px;">
-          {len(profiles)} profiles total * {len(new_profiles)} new * {len(seen_profiles)} previously sent * generated {escape(ts)}
-        </div>
-        {full_section_html}
-        {compact_section_html}
-      </body>
-    </html>
-    """
 
     msg.add_alternative(html_body, subtype="html")
 
