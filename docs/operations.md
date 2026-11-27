@@ -5,7 +5,7 @@
 When deploying PupSwipe behind Cloudflare Tunnel on an existing external `tunnel_public` Docker network, attach `compose.tunnel.yml` alongside `compose.yml` (in Portainer **Additional paths**, list `compose.tunnel.yml`) and keep `PUPSWIPE_BIND_IP=127.0.0.1` so the origin is not exposed on the LAN:
 
 ```bash
-docker compose --env-file .env -f compose.yml -f compose.tunnel.yml up -d --build
+docker compose --env-file .env -f compose.yml -f compose.tunnel.yml up -d
 ```
 
 `pgadmin` and raw host Postgres ports are disabled by default in `compose.yml`. Start `pgadmin` only on demand over localhost/SSH tunnel using the `debug` profile:
@@ -13,6 +13,24 @@ docker compose --env-file .env -f compose.yml -f compose.tunnel.yml up -d --buil
 ```bash
 docker compose --env-file .env -f compose.yml --profile debug up -d pgadmin
 ```
+
+## CI/CD (GHCR + Portainer Webhook)
+
+Production images are built in GitHub Actions (`.github/workflows/ci.yml`) after `black`, `ruff`, and `pytest` pass on `main` and pushed to `ghcr.io/badbayesian/puppy_ping:main` (plus `sha-<commit>`). Local development stacks (`compose.dev.yml`, `compose.feature.yml`) override `build:` and `pull_policy: build` to keep building locally.
+
+To enable automatic zero-build deploys to `thebutler` via a Cloudflare-Access-protected Portainer webhook:
+
+1. In Portainer Stack `puppyping`, set **Additional paths** to `compose.tunnel.yml` and enable **GitOps updates -> Webhook** (with **Force pull image** enabled).
+2. In Cloudflare Zero Trust:
+   - Create a Service Token (`CF-Access-Client-Id` / `CF-Access-Client-Secret`).
+   - Add a path-restricted Tunnel public hostname route forwarding only `/api/stacks/webhooks/<webhook-id>` to Portainer so the Portainer UI/API remain unexposed.
+   - Protect that route with a Cloudflare Access `Service Auth` policy bound to the Service Token.
+3. Add these GitHub Actions repository secrets:
+   - `PORTAINER_WEBHOOK_URL`
+   - `CF_ACCESS_CLIENT_ID`
+   - `CF_ACCESS_CLIENT_SECRET`
+
+If `PORTAINER_WEBHOOK_URL` is unset, the workflow skips the webhook step with a notice.
 
 ## Scraper Scheduling
 
@@ -48,13 +66,21 @@ docker exec puppyping-scraper /app/docker/run_scrape_cron.sh
 
 ## Postgres Backup
 
-Backup script:
+`compose.yml` runs a `postgres-backup` sidecar container (`puppyping-postgres-backup`, using `postgres:18` and `docker/run_postgres_backup.sh`) that performs a daily logical `pg_dump -Fc` at `01:30` `America/Chicago` into `/mnt/thebutler/config/puppy_ping/postgres/backups` with 30-day retention (`POSTGRES_BACKUP_DIR`, `POSTGRES_BACKUP_HOUR`, `POSTGRES_BACKUP_MINUTE`, `POSTGRES_BACKUP_RETENTION_DAYS`).
+
+Run an immediate sidecar backup once:
+
+```bash
+docker exec puppyping-postgres-backup /usr/local/bin/run_postgres_backup.sh --once
+```
+
+Standalone host backup script (alternative if not running the sidecar):
 
 - `scripts/backup_postgres.sh`
 
 Default backup location:
 
-- `/mnt/thebutler/data/puppyping/postgres/backups`
+- `/mnt/thebutler/config/puppy_ping/postgres/backups`
 
 Install:
 

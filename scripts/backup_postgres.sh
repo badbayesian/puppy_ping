@@ -6,7 +6,7 @@ set -euo pipefail
 CONTAINER_NAME="${CONTAINER_NAME:-puppyping-postgres}"
 DB_NAME="${DB_NAME:-puppyping}"
 DB_USER="${DB_USER:-puppyping}"
-BACKUP_ROOT="${BACKUP_ROOT:-/mnt/thebutler/data/puppyping/postgres}"
+BACKUP_ROOT="${BACKUP_ROOT:-/mnt/thebutler/config/puppy_ping/postgres}"
 BACKUP_DIR="${BACKUP_ROOT}/backups"
 RETENTION_DAYS="${RETENTION_DAYS:-30}"
 

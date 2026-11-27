@@ -1,5 +1,9 @@
 services:
   puppyping:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    pull_policy: build
     container_name: puppyping-scraper-feature
     # Scraper is opt-in for feature stack; keep main stack as the single scheduler.
     profiles:
@@ -10,12 +14,24 @@ services:
     ports: !override
       - "5434:5432"
 
+  postgres-backup:
+    container_name: puppyping-postgres-backup-feature
+    profiles:
+      - backup
+    volumes: !override
+      - ./data/backups:/backups
+      - ./docker/run_postgres_backup.sh:/usr/local/bin/run_postgres_backup.sh:ro
+
   pgadmin:
     container_name: puppyping-pgadmin-feature
     ports: !override
       - "5051:80"
 
   pupswipe:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    pull_policy: build
     container_name: puppyping-pupswipe-feature
     environment:
       TZ: America/Chicago
