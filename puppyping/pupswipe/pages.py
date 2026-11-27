@@ -288,16 +288,16 @@ def _render_filter_bar(
             f'<span class="filter-chip">{escape(chip)}</span>'
             for chip in active_filter_chips
         )
-        chips_html = f'<div class="active-filter-chips">{chips_items}</div>'
+        chips_html = f'<span class="active-filter-chips">{chips_items}</span>'
 
     return f"""
       <section class="filter-strip" aria-label="{escape(aria_label)}">
         <details class="filter-drawer"{open_attr}>
           <summary class="filter-drawer-summary">
-            <div class="filter-summary-left">
-              <div class="stats">{escape(stats_text)}</div>
+            <span class="filter-summary-left">
+              <span class="stats">{escape(stats_text)}</span>
               {chips_html}
-            </div>
+            </span>
             <span class="filter-toggle-pill">
               {_ICON_FILTER}
               <span>Filters</span>
@@ -408,6 +408,21 @@ def _render_ecosystem_section(
     """
 
 
+def _normalize_safe_photo_url(value: object) -> str | None:
+    """Return a trimmed photo URL only when its scheme is safe for img/JS rendering."""
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    if not candidate:
+        return None
+    lower = candidate.lower()
+    if lower.startswith("https://") or lower.startswith("http://"):
+        return candidate
+    if candidate.startswith("/") and not candidate.startswith("//"):
+        return candidate
+    return None
+
+
 def _get_primary_image(pup: dict) -> str | None:
     """Extract the primary image URL from a dog record.
 
@@ -417,20 +432,21 @@ def _get_primary_image(pup: dict) -> str | None:
     Returns:
         The primary image URL if present, otherwise ``None``.
     """
-    image = pup.get("primary_image")
-    if isinstance(image, str) and image.strip():
-        return image
+    primary = _normalize_safe_photo_url(pup.get("primary_image"))
+    if primary:
+        return primary
     media = pup.get("media") or {}
     images = media.get("images") if isinstance(media, dict) else None
-    if isinstance(images, list) and images:
-        first = images[0]
-        if isinstance(first, str) and first.strip():
-            return first
+    if isinstance(images, list):
+        for item in images:
+            safe_url = _normalize_safe_photo_url(item)
+            if safe_url:
+                return safe_url
     return None
 
 
 def _get_photo_urls(pup: dict) -> list[str]:
-    """Collect unique photo URLs for a dog record.
+    """Collect unique safe photo URLs for a dog record.
 
     Args:
         pup: Dog profile dictionary.
@@ -446,8 +462,9 @@ def _get_photo_urls(pup: dict) -> list[str]:
     images = media.get("images") if isinstance(media, dict) else None
     if isinstance(images, list):
         for item in images:
-            if isinstance(item, str) and item.strip() and item not in urls:
-                urls.append(item)
+            safe_url = _normalize_safe_photo_url(item)
+            if safe_url and safe_url not in urls:
+                urls.append(safe_url)
     return urls
 
 
@@ -690,7 +707,7 @@ def _render_page(
         max_name_len=MAX_NAME_FILTER_LENGTH,
         clear_filter_html=clear_filter_html,
         review_mode_hidden_input=review_mode_hidden_input,
-        open_by_default=bool(active_filters),
+        open_by_default=False,
     )
 
     if completed_cycle and total > 0:
@@ -1613,7 +1630,7 @@ def _render_likes_page(
             f'<span class="filter-chip">{escape(chip)}</span>'
             for chip in active_filters
         )
-        likes_chips_html = f'<div class="active-filter-chips">{likes_chips_items}</div>'
+        likes_chips_html = f'<span class="active-filter-chips">{likes_chips_items}</span>'
     likes_count_badge = (
         f'<span class="filter-count">{len(active_filters)}</span>'
         if active_filters
@@ -1624,10 +1641,10 @@ def _render_likes_page(
       <section class="likes-filter-strip" aria-label="Liked pet filters">
         <details class="filter-drawer" open>
           <summary class="filter-drawer-summary">
-            <div class="filter-summary-left">
-              <div class="stats">{escape(stats_copy)}</div>
+            <span class="filter-summary-left">
+              <span class="stats">{escape(stats_copy)}</span>
               {likes_chips_html}
-            </div>
+            </span>
             <span class="filter-toggle-pill">
               {_ICON_FILTER}
               <span>Filters</span>

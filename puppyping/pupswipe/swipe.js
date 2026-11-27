@@ -57,6 +57,12 @@
   selects.forEach((select) => {
     select.addEventListener("change", submitFilters);
   });
+
+  window.addEventListener("pageshow", (ev) => {
+    if (ev.persisted) {
+      isSubmitting = false;
+    }
+  });
 })();
 
 (() => {
@@ -113,7 +119,8 @@
       if (Array.isArray(parsed)) {
         photos = parsed.filter(
           (url) =>
-            typeof url === "string" && /^(https?:\/\/|\/)/i.test(url.trim())
+            typeof url === "string" &&
+            /^(https?:\/\/|\/(?!\/))/i.test(url.trim())
         );
       }
     } catch {
@@ -382,7 +389,7 @@
     if (
       target &&
       target.closest(
-        "input, textarea, select, [contenteditable='true'], details.account-menu[open]"
+        "input, textarea, select, [contenteditable='true'], a, button, summary, [role='button'], details.account-menu[open]"
       )
     ) {
       return;
@@ -397,21 +404,21 @@
       ev.preventDefault();
       isSubmittingSwipe = true;
       randomForm.submit();
-    } else if (ev.key === "ArrowUp" || ev.key === "[") {
+    } else if (ev.key === "[") {
       if (stepPhoto(-1)) {
         ev.preventDefault();
       }
-    } else if (ev.key === "ArrowDown" || ev.key === "]") {
+    } else if (ev.key === "]" || ev.key === " ") {
       if (stepPhoto(1)) {
         ev.preventDefault();
       }
-    } else if (
-      ev.key === " " &&
-      (!target || !target.closest("button, a, summary"))
-    ) {
-      if (stepPhoto(1)) {
-        ev.preventDefault();
-      }
+    }
+  });
+
+  window.addEventListener("pageshow", (ev) => {
+    if (ev.persisted) {
+      isSubmittingSwipe = false;
+      resetVisual();
     }
   });
 

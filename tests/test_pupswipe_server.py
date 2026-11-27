@@ -1449,3 +1449,95 @@ def test_photo_fallback_initials_escape_raw_name_safely(monkeypatch):
 
     html = pupswipe._render_page().decode("utf-8")
     assert '<div class="photo-fallback">BP</div>' in html
+
+
+def test_get_photo_urls_filters_unsafe_schemes_consistently_with_js(monkeypatch):
+    monkeypatch.setattr(pupswipe, "_count_puppies", lambda **_kwargs: 1)
+    monkeypatch.setattr(
+        pupswipe,
+        "_fetch_puppies",
+        lambda limit, **_kwargs: [
+            {
+                "dog_id": 109,
+                "url": "https://example.com/dog/109",
+                "name": "Sunny",
+                "breed": "Mix",
+                "gender": "Female",
+                "age_raw": "5 months",
+                "location": "Chicago, IL",
+                "status": "Available",
+                "description": "Safe photo URL test.",
+                "primary_image": "javascript:alert(1)",
+                "media": {
+                    "images": [
+                        "https://example.com/a.jpg",
+                        "data:text/html,<script>",
+                        "//evil.example/c.jpg",
+                        "/images/local.jpg",
+                    ]
+                },
+                "source": "paws_chicago",
+            }
+        ],
+    )
+
+    html = pupswipe._render_page(photo_index=1).decode("utf-8")
+    assert "javascript:" not in html
+    assert "data:text/html" not in html
+    assert "//evil.example" not in html
+    assert 'data-photo-index="1"' in html
+    assert "2 / 2" in html
+    dot_count = html.count('class="carousel-dot"') + html.count(
+        'class="carousel-dot is-active"'
+    )
+    assert dot_count == 2
+
+
+def test_filter_drawer_uses_span_inside_summary_and_stays_collapsed_on_home(
+    monkeypatch,
+):
+    monkeypatch.setattr(pupswipe, "_count_puppies", lambda **_kwargs: 5)
+    monkeypatch.setattr(pupswipe, "_count_unseen_puppies", lambda **_kwargs: 3)
+    monkeypatch.setattr(
+        pupswipe,
+        "_fetch_puppies",
+        lambda limit, **_kwargs: [
+            {
+                "dog_id": 110,
+                "url": "https://example.com/dog/110",
+                "name": "Biscuit",
+                "breed": "Labrador",
+                "gender": "Male",
+                "age_raw": "4 months",
+                "location": "Chicago, IL",
+                "status": "Available",
+                "description": "Filter test.",
+                "media": {"images": ["https://example.com/b.jpg"]},
+                "source": "paws_chicago",
+            }
+        ],
+    )
+
+    home_html = pupswipe._render_page(breed_filter="Labrador").decode("utf-8")
+    assert '<details class="filter-drawer">' in home_html
+    assert "Breed: Labrador" in home_html
+    home_summary = home_html.split('<summary class="filter-drawer-summary">', 1)[
+        1
+    ].split("</summary>", 1)[0]
+    assert "<div" not in home_summary
+
+    catalog_html = pupswipe._render_catalog_page(
+        puppies=[], total_available=0, breed_filter="Labrador"
+    ).decode("utf-8")
+    catalog_summary = catalog_html.split('<summary class="filter-drawer-summary">', 1)[
+        1
+    ].split("</summary>", 1)[0]
+    assert "<div" not in catalog_summary
+
+    likes_html = pupswipe._render_likes_page(
+        email="person@gmail.com", puppies=[], total_likes=0, breed_filter="Labrador"
+    ).decode("utf-8")
+    likes_summary = likes_html.split('<summary class="filter-drawer-summary">', 1)[
+        1
+    ].split("</summary>", 1)[0]
+    assert "<div" not in likes_summary
