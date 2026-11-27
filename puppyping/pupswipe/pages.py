@@ -4,8 +4,100 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from html import escape
+import json
 from typing import Callable
 from urllib.parse import urlencode
+
+_FAVICON_SVG = (
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>"
+    "<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>"
+    "<stop offset='0%' stop-color='%23f47252'/>"
+    "<stop offset='100%' stop-color='%23147a58'/>"
+    "</linearGradient></defs>"
+    "<rect width='64' height='64' rx='18' fill='url(%23g)'/>"
+    "<circle cx='21' cy='25' r='5' fill='%23fff'/>"
+    "<circle cx='32' cy='20' r='5' fill='%23fff'/>"
+    "<circle cx='43' cy='25' r='5' fill='%23fff'/>"
+    "<path d='M20 42c0-7 5-12 12-12s12 5 12 12c0 4-3 7-7 7-3 0-4-1-5-1s-2 1-5 1c-4 0-7-3-7-7z' fill='%23fff'/>"
+    "</svg>"
+)
+_FAVICON_LINK = (
+    f'<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,{_FAVICON_SVG}" />'
+)
+
+_ICON_PAW = (
+    '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">'
+    '<circle cx="6.5" cy="9.5" r="2.1"/>'
+    '<circle cx="12" cy="7.2" r="2.2"/>'
+    '<circle cx="17.5" cy="9.5" r="2.1"/>'
+    '<path d="M6.4 17.2c0-3.3 2.5-5.6 5.6-5.6s5.6 2.3 5.6 5.6c0 1.9-1.5 3.3-3.4 3.3-1.2 0-1.7-.5-2.2-.5s-1 .5-2.2.5c-1.9 0-3.4-1.4-3.4-3.3z"/>'
+    "</svg>"
+)
+_ICON_PASS = (
+    '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" '
+    'stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M18 6 6 18M6 6l12 12"/></svg>'
+)
+_ICON_HEART = (
+    '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">'
+    '<path d="M12 20.4s-7.4-4.7-9.6-9.1C.8 8.2 2.4 4.5 6 4.1c2-.2 3.8.8 4.9 2.3h2.2C14.2 4.9 16 3.9 18 4.1c3.6.4 5.2 4.1 3.6 7.2-2.2 4.4-9.6 9.1-9.6 9.1z"/>'
+    "</svg>"
+)
+_ICON_RANDOM = (
+    '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" '
+    'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>'
+)
+_ICON_EXTERNAL = (
+    '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" '
+    'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>'
+    '<path d="M15 3h6v6M10 14 21 3"/></svg>'
+)
+_ICON_FILTER = (
+    '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" '
+    'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M4 6h16M7 12h10M10 18h4"/></svg>'
+)
+_ICON_CHEVRON_DOWN = (
+    '<svg class="filter-chevron" viewBox="0 0 24 24" width="15" height="15" fill="none" '
+    'stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="m6 9 6 6 6-6"/></svg>'
+)
+_ICON_CHEVRON_LEFT = (
+    '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" '
+    'stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="m15 18-6-6 6-6"/></svg>'
+)
+_ICON_CHEVRON_RIGHT = (
+    '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" '
+    'stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="m9 18 6-6-6-6"/></svg>'
+)
+_ICON_SHARE = (
+    '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" '
+    'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>'
+    '<path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>'
+)
+_ICON_TRASH = (
+    '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" '
+    'stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M3 6h18M8 6V4h8v2M6 6v14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V6"/></svg>'
+)
+_ICON_BELL = (
+    '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" '
+    'stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>'
+    '<path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>'
+)
+_PAGE_SHELL_BG = """
+    <div class="background" aria-hidden="true">
+      <div class="glow glow-a"></div>
+      <div class="glow glow-b"></div>
+      <div class="grid"></div>
+    </div>
+""".strip()
 
 
 @dataclass(frozen=True)
@@ -32,6 +124,308 @@ class PageDeps:
     provider_disclaimer: str
 
 
+def _safe_initials(raw_name: object, fallback: str = "PUP") -> str:
+    """Build two-character fallback initials from raw text before HTML escaping."""
+    text = str(raw_name or "").strip()
+    parts = [part for part in text.split() if part]
+    letters: list[str] = []
+    for part in parts[:2]:
+        for ch in part:
+            if ch.isalnum():
+                letters.append(ch.upper())
+                break
+    initials = "".join(letters)[:2] or fallback
+    return escape(initials)
+
+
+def _head_html(title: str) -> str:
+    """Render shared document head markup with inline SVG favicon."""
+    return f"""  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{escape(title)}</title>
+    {_FAVICON_LINK}
+    <link rel="stylesheet" href="/styles.css" />
+  </head>"""
+
+
+def _render_topbar(
+    *,
+    active_nav: str,
+    title: str,
+    subtitle: str,
+    signed_in_email: str | None = None,
+    signin_next: str = "/",
+    signout_next: str = "/",
+    show_nav: bool = True,
+    show_signin_cta: bool = True,
+) -> str:
+    """Render consistent top bar with segmented primary nav and compact account menu."""
+    escaped_email = escape(signed_in_email) if signed_in_email else ""
+    nav_html = ""
+    if show_nav:
+        swipe_cls = "nav-pill is-active" if active_nav == "swipe" else "nav-pill"
+        catalog_cls = "nav-pill is-active" if active_nav == "catalog" else "nav-pill"
+        likes_cls = "nav-pill is-active" if active_nav == "likes" else "nav-pill"
+        swipe_current = ' aria-current="page"' if active_nav == "swipe" else ""
+        catalog_current = ' aria-current="page"' if active_nav == "catalog" else ""
+        likes_current = ' aria-current="page"' if active_nav == "likes" else ""
+        likes_nav = (
+            f'<a class="{likes_cls}" href="/likes"{likes_current}>Liked pups</a>'
+            if signed_in_email
+            else ""
+        )
+        nav_html = f"""
+        <nav class="primary-nav" aria-label="Primary navigation">
+          <a class="{swipe_cls}" href="/"{swipe_current}>Swipe</a>
+          <a class="{catalog_cls}" href="/catalog"{catalog_current}>Catalog</a>
+          {likes_nav}
+        </nav>"""
+
+    if signed_in_email:
+        avatar_char = _safe_initials(signed_in_email, "U")[0]
+        local_handle = signed_in_email.split("@", 1)[0]
+        account_html = f"""
+        <div class="account-actions">
+          <details class="account-menu">
+            <summary class="account-trigger" aria-label="Account menu">
+              <span class="account-avatar" aria-hidden="true">{avatar_char}</span>
+              <span class="account-handle">{escape(local_handle)}</span>
+              {_ICON_CHEVRON_DOWN}
+            </summary>
+            <div class="account-dropdown">
+              <div class="account-dropdown-head">
+                <span class="account-role">Signed in</span>
+                <span class="account-email">{escaped_email}</span>
+              </div>
+              <a class="account-menu-item" href="/reset-password">Reset password</a>
+              <form class="inline-form" method="post" action="/signout">
+                <input type="hidden" name="next" value="{escape(signout_next)}" />
+                <button class="btn subtle account-signout-btn" type="submit">Sign out</button>
+              </form>
+            </div>
+          </details>
+        </div>"""
+    elif show_signin_cta:
+        signin_query = urlencode({"next": signin_next})
+        account_html = f"""
+        <div class="account-actions">
+          <a class="profile-link account-link" href="/signin?{signin_query}">Sign in to save likes</a>
+        </div>"""
+    else:
+        account_html = ""
+
+    return f"""
+      <header class="topbar">
+        <a class="brand" href="/">
+          <div class="brand-mark">{_ICON_PAW}</div>
+          <div>
+            <h1>{escape(title)}</h1>
+            <p>{escape(subtitle)}</p>
+          </div>
+        </a>
+        {nav_html}
+        {account_html}
+      </header>"""
+
+
+def _provider_options_html(
+    sources: tuple[str, ...],
+    normalized_provider: str,
+    provider_name_fn: Callable[[str | None, str | None], str],
+) -> str:
+    """Build provider <option> markup."""
+    options = ['<option value="">All providers</option>']
+    for source in sources:
+        selected_attr = " selected" if source == normalized_provider else ""
+        options.append(
+            f'<option value="{escape(source)}"{selected_attr}>'
+            f"{escape(provider_name_fn(source, None))}</option>"
+        )
+    return "".join(options)
+
+
+def _species_options_html(normalized_species: str) -> str:
+    """Build species <option> markup."""
+    species_values = ["", "dog", "cat", "rabbit", "bird", "other"]
+    if normalized_species and normalized_species not in species_values:
+        species_values.append(normalized_species)
+    return "".join(
+        (
+            f'<option value="{escape(value)}"'
+            f'{" selected" if value == normalized_species else ""}>'
+            f'{escape("All species" if value == "" else value.title())}</option>'
+        )
+        for value in species_values
+    )
+
+
+def _render_filter_bar(
+    *,
+    form_id: str,
+    id_prefix: str,
+    action: str,
+    aria_label: str,
+    stats_text: str,
+    active_filter_chips: list[str],
+    breed_value: str,
+    name_value: str,
+    species_options_html: str,
+    provider_options_html: str,
+    max_age_value: str,
+    max_breed_len: int,
+    max_name_len: int,
+    clear_filter_html: str,
+    review_mode_hidden_input: str = "",
+    open_by_default: bool = False,
+) -> str:
+    """Render shared collapsible filter drawer with live auto-filter inputs."""
+    open_attr = " open" if open_by_default else ""
+    active_count = len(active_filter_chips)
+    count_badge = (
+        f'<span class="filter-count">{active_count}</span>' if active_count else ""
+    )
+    chips_html = ""
+    if active_filter_chips:
+        chips_items = "".join(
+            f'<span class="filter-chip">{escape(chip)}</span>'
+            for chip in active_filter_chips
+        )
+        chips_html = f'<span class="active-filter-chips">{chips_items}</span>'
+
+    return f"""
+      <section class="filter-strip" aria-label="{escape(aria_label)}">
+        <details class="filter-drawer"{open_attr}>
+          <summary class="filter-drawer-summary">
+            <span class="filter-summary-left">
+              <span class="stats">{escape(stats_text)}</span>
+              {chips_html}
+            </span>
+            <span class="filter-toggle-pill">
+              {_ICON_FILTER}
+              <span>Filters</span>
+              {count_badge}
+              {_ICON_CHEVRON_DOWN}
+            </span>
+          </summary>
+          <form
+            id="{escape(form_id)}"
+            class="breed-filter-form"
+            method="get"
+            action="{escape(action)}"
+            data-auto-filter="1"
+          >
+            {review_mode_hidden_input}
+            <div class="filter-field">
+              <label for="{escape(id_prefix)}breed-filter">Breed</label>
+              <input
+                id="{escape(id_prefix)}breed-filter"
+                name="breed"
+                type="text"
+                value="{breed_value}"
+                placeholder="e.g. Labrador"
+                maxlength="{max_breed_len}"
+              />
+            </div>
+            <div class="filter-field">
+              <label for="{escape(id_prefix)}name-filter">Name</label>
+              <input
+                id="{escape(id_prefix)}name-filter"
+                name="name"
+                type="text"
+                value="{name_value}"
+                placeholder="e.g. Nova"
+                maxlength="{max_name_len}"
+              />
+            </div>
+            <div class="filter-field">
+              <label for="{escape(id_prefix)}species-filter">Species</label>
+              <select id="{escape(id_prefix)}species-filter" name="species">
+                {species_options_html}
+              </select>
+            </div>
+            <div class="filter-field">
+              <label for="{escape(id_prefix)}provider-filter">Provider</label>
+              <select id="{escape(id_prefix)}provider-filter" name="provider">
+                {provider_options_html}
+              </select>
+            </div>
+            <div class="filter-field">
+              <label for="{escape(id_prefix)}max-age-filter">Max age (months)</label>
+              <input
+                id="{escape(id_prefix)}max-age-filter"
+                name="max_age"
+                type="number"
+                min="0.5"
+                max="120"
+                step="0.5"
+                value="{max_age_value}"
+                data-auto-submit-delay-ms="1200"
+                inputmode="decimal"
+              />
+            </div>
+            {clear_filter_html}
+          </form>
+        </details>
+      </section>
+    """
+
+
+def _render_ecosystem_section(
+    *,
+    input_id: str,
+    current_photo_index: int,
+    filter_hidden_inputs: str,
+    provider_disclaimer: str,
+) -> str:
+    """Render compact PuppyPing alert signup bar."""
+    return f"""
+      <section class="ecosystem" aria-label="PuppyPing ecosystem">
+        <div class="ecosystem-info">
+          <div class="ecosystem-head">
+            <span class="ecosystem-icon" aria-hidden="true">{_ICON_BELL}</span>
+            <h3>Get PuppyPing Alerts</h3>
+          </div>
+          <p class="ecosystem-copy">
+            Join the PuppyPing email list for newly spotted adoptable puppies. {escape(provider_disclaimer)}
+          </p>
+        </div>
+        <form class="subscribe-form" method="post" action="/subscribe">
+          <input type="hidden" name="photo" value="{current_photo_index}" />
+          {filter_hidden_inputs}
+          <label class="subscribe-label" for="{escape(input_id)}">Email for PuppyPing alerts</label>
+          <div class="subscribe-row">
+            <input
+              id="{escape(input_id)}"
+              name="email"
+              type="email"
+              inputmode="email"
+              autocomplete="email"
+              placeholder="you@example.com"
+              required
+            />
+            <button class="btn subscribe" type="submit">Join</button>
+          </div>
+        </form>
+      </section>
+    """
+
+
+def _normalize_safe_photo_url(value: object) -> str | None:
+    """Return a trimmed photo URL only when its scheme is safe for img/JS rendering."""
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    if not candidate:
+        return None
+    lower = candidate.lower()
+    if lower.startswith("https://") or lower.startswith("http://"):
+        return candidate
+    if candidate.startswith("/") and not candidate.startswith("//"):
+        return candidate
+    return None
+
+
 def _get_primary_image(pup: dict) -> str | None:
     """Extract the primary image URL from a dog record.
 
@@ -41,20 +435,21 @@ def _get_primary_image(pup: dict) -> str | None:
     Returns:
         The primary image URL if present, otherwise ``None``.
     """
-    image = pup.get("primary_image")
-    if isinstance(image, str) and image.strip():
-        return image
+    primary = _normalize_safe_photo_url(pup.get("primary_image"))
+    if primary:
+        return primary
     media = pup.get("media") or {}
     images = media.get("images") if isinstance(media, dict) else None
-    if isinstance(images, list) and images:
-        first = images[0]
-        if isinstance(first, str) and first.strip():
-            return first
+    if isinstance(images, list):
+        for item in images:
+            safe_url = _normalize_safe_photo_url(item)
+            if safe_url:
+                return safe_url
     return None
 
 
 def _get_photo_urls(pup: dict) -> list[str]:
-    """Collect unique photo URLs for a dog record.
+    """Collect unique safe photo URLs for a dog record.
 
     Args:
         pup: Dog profile dictionary.
@@ -70,8 +465,9 @@ def _get_photo_urls(pup: dict) -> list[str]:
     images = media.get("images") if isinstance(media, dict) else None
     if isinstance(images, list):
         for item in images:
-            if isinstance(item, str) and item.strip() and item not in urls:
-                urls.append(item)
+            safe_url = _normalize_safe_photo_url(item)
+            if safe_url and safe_url not in urls:
+                urls.append(safe_url)
     return urls
 
 
@@ -172,37 +568,26 @@ def _render_page(
         max_age_months=normalized_max_age_months,
         review_mode="passed" if review_passed else "",
     )
-    escaped_signed_in_email = escape(signed_in_email) if signed_in_email else ""
-    if signed_in_email:
-        account_actions_html = f"""
-          <div class="account-actions">
-            <span class="account-email">{escaped_signed_in_email}</span>
-            <a class="profile-link" href="/catalog">Catalog</a>
-            <a class="profile-link" href="/likes">Liked pups</a>
-            <a class="profile-link" href="/reset-password">Reset password</a>
-            <form class="inline-form" method="post" action="/signout">
-              <input type="hidden" name="next" value="/" />
-              <button class="btn subtle" type="submit">Sign out</button>
-            </form>
-          </div>
-        """
-    else:
-        signin_query = urlencode({"next": "/"})
-        account_actions_html = f"""
-          <div class="account-actions">
-            <a class="profile-link" href="/catalog">Catalog</a>
-            <a class="profile-link account-link" href="/signin?{signin_query}">Sign in to save likes</a>
-          </div>
-        """
-    onboarding_intro_html = """
-      <section class="hero" aria-label="How PupSwipe works">
-        <p class="hero-kicker">How It Works</p>
-        <h2>Swipe right to like, left to pass.</h2>
+    topbar_html = _render_topbar(
+        active_nav="swipe",
+        title="PupSwipe",
+        subtitle="By PuppyPing",
+        signed_in_email=signed_in_email,
+        signin_next="/",
+        signout_next="/",
+    )
+    onboarding_intro_html = (
+        ""
+        if signed_in_email
+        else """
+      <section class="hero hero-compact" aria-label="How PupSwipe works">
+        <span class="hero-kicker">How It Works</span>
         <p class="hero-copy">
-          Create a profile with email and password to keep your liked pets in one place.
+          Swipe right to like, left to pass &mdash; sign in anytime to save favorites across devices.
         </p>
       </section>
     """
+    )
 
     try:
         total = _count_puppies(
@@ -255,56 +640,43 @@ def _render_page(
     except Exception as exc:
         error_html = f"""<!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PupSwipe | PuppyPing</title>
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
-  <body>
+{_head_html("PupSwipe | PuppyPing")}
+  <body class="swipe-page">
+    {_PAGE_SHELL_BG}
     <div class="app">
-      <header class="topbar">
-        <div class="brand">
-          <div class="brand-mark">PS</div>
-          <div>
-            <h1>PupSwipe</h1>
-            <p>By PuppyPing</p>
-          </div>
-        </div>
-        {account_actions_html}
-      </header>
+      {topbar_html}
       {onboarding_intro_html}
-      <main>
+      <main class="swipe-main">
         <section class="stack">
           <div class="state state-error">Failed to load puppies: {escape(str(exc))}</div>
         </section>
       </main>
     </div>
+    <script src="/swipe.js"></script>
   </body>
 </html>"""
         return error_html.encode("utf-8")
 
     if total:
-        stats = (
+        stats_text = (
             f"{max(remaining, 0)} passed left of {total}"
             if review_passed
             else f"{max(remaining, 0)} left of {total}"
         )
     else:
-        stats = "No puppies found"
+        stats_text = "No puppies found"
+
     active_filters: list[str] = []
     if normalized_breed:
         active_filters.append(f"Breed: {normalized_breed}")
     if normalized_name:
         active_filters.append(f"Name: {normalized_name}")
     if normalized_provider:
-        active_filters.append(f"Provider: {_provider_name(normalized_provider)}")
+        active_filters.append(f"Provider: {_provider_name(normalized_provider, None)}")
     if normalized_species:
         active_filters.append(f"Species: {normalized_species.title()}")
     if normalized_max_age_months != MAX_PUPPY_AGE_MONTHS:
-        active_filters.append(f"Max age: {normalized_max_age_months:g} months")
-    if active_filters:
-        stats = f"{stats} | Filters: {', '.join(active_filters)}"
+        active_filters.append(f"Max age: {normalized_max_age_months:g} mo")
 
     clear_filter_html = ""
     if active_filters:
@@ -314,101 +686,32 @@ def _render_page(
         clear_query = urlencode(clear_params)
         clear_filter_html = f'<a class="clear-filter" href="/?{clear_query}">Clear</a>'
 
-    provider_options = ['<option value="">All providers</option>']
-    for source in PUPSWIPE_SOURCES:
-        selected_attr = " selected" if source == normalized_provider else ""
-        provider_options.append(
-            f'<option value="{escape(source)}"{selected_attr}>{escape(_provider_name(source))}</option>'
-        )
-    provider_options_html = "".join(provider_options)
-    species_option_values = ["", "dog", "cat", "rabbit", "bird", "other"]
-    if normalized_species and normalized_species not in species_option_values:
-        species_option_values.append(normalized_species)
-    species_options_html = "".join(
-        (
-            f'<option value="{escape(value)}"'
-            f'{" selected" if value == normalized_species else ""}>'
-            f'{escape("All species" if value == "" else value.title())}</option>'
-        )
-        for value in species_option_values
+    provider_options_html = _provider_options_html(
+        PUPSWIPE_SOURCES, normalized_provider, _provider_name
     )
+    species_options_html = _species_options_html(normalized_species)
     review_mode_hidden_input = (
         '<input type="hidden" name="review" value="passed" />' if review_passed else ""
     )
 
-    filter_bar = f"""
-      <section class="filter-strip" aria-label="Pup filters">
-        <form
-          id="auto-filter-form"
-          class="breed-filter-form"
-          method="get"
-          action="/"
-          data-auto-filter="1"
-        >
-          {review_mode_hidden_input}
-          <div class="filter-field">
-            <label for="breed-filter">Breed</label>
-            <input
-              id="breed-filter"
-              name="breed"
-              type="text"
-              value="{escaped_breed}"
-              placeholder="e.g. Labrador"
-              maxlength="{MAX_BREED_FILTER_LENGTH}"
-              onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()"
-            />
-          </div>
-          <div class="filter-field">
-            <label for="name-filter">Name</label>
-            <input
-              id="name-filter"
-              name="name"
-              type="text"
-              value="{escaped_name}"
-              placeholder="e.g. Nova"
-              maxlength="{MAX_NAME_FILTER_LENGTH}"
-              onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()"
-            />
-          </div>
-          <div class="filter-field">
-            <label for="species-filter">Species</label>
-            <select
-              id="species-filter"
-              name="species"
-              onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()"
-            >
-              {species_options_html}
-            </select>
-          </div>
-          <div class="filter-field">
-            <label for="provider-filter">Provider</label>
-            <select
-              id="provider-filter"
-              name="provider"
-              onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()"
-            >
-              {provider_options_html}
-            </select>
-          </div>
-          <div class="filter-field">
-            <label for="max-age-filter">Max age (months)</label>
-            <input
-              id="max-age-filter"
-              name="max_age"
-              type="number"
-              min="0.5"
-              max="120"
-              step="0.5"
-              value="{escaped_max_age}"
-              data-auto-submit-delay-ms="1200"
-              inputmode="decimal"
-              onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()"
-            />
-          </div>
-          {clear_filter_html}
-        </form>
-      </section>
-    """
+    filter_bar = _render_filter_bar(
+        form_id="auto-filter-form",
+        id_prefix="",
+        action="/",
+        aria_label="Pup filters",
+        stats_text=stats_text,
+        active_filter_chips=active_filters,
+        breed_value=escaped_breed,
+        name_value=escaped_name,
+        species_options_html=species_options_html,
+        provider_options_html=provider_options_html,
+        max_age_value=escaped_max_age,
+        max_breed_len=MAX_BREED_FILTER_LENGTH,
+        max_name_len=MAX_NAME_FILTER_LENGTH,
+        clear_filter_html=clear_filter_html,
+        review_mode_hidden_input=review_mode_hidden_input,
+        open_by_default=False,
+    )
 
     if completed_cycle and total > 0:
         filtered_species_label = _filtered_species_label(normalized_species)
@@ -418,32 +721,14 @@ def _render_page(
         )
         celebration_html = f"""<!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PupSwipe | PuppyPing</title>
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
-  <body class="catalog-page">
-    <div class="background">
-      <div class="glow glow-a"></div>
-      <div class="glow glow-b"></div>
-      <div class="grid"></div>
-    </div>
+{_head_html("PupSwipe | PuppyPing")}
+  <body class="swipe-page">
+    {_PAGE_SHELL_BG}
     <div class="app">
-      <header class="topbar">
-        <div class="brand">
-          <div class="brand-mark">PS</div>
-          <div>
-            <h1>PupSwipe</h1>
-            <p>By PuppyPing</p>
-          </div>
-        </div>
-        <div class="stats">{escape(stats)}</div>
-        {account_actions_html}
-      </header>
+      {topbar_html}
       {onboarding_intro_html}
-      <main>
+      <main class="swipe-main">
+        {filter_bar}
         <section class="stack">
           <div class="state state-complete">
             <div class="celebrate-burst" aria-hidden="true">
@@ -458,99 +743,64 @@ def _render_page(
             <p class="complete-copy">{escape(completion_copy)}</p>
           </div>
         </section>
-        <section class="controls">
+        <section class="controls controls-compact">
           <form method="get" action="/">
             <input type="hidden" name="review" value="passed" />
             {filter_hidden_inputs}
-            <button class="btn like" type="submit">Start over</button>
+            <button class="btn like" type="submit"><span class="btn-icon" aria-hidden="true">{_ICON_HEART}</span>Start over</button>
           </form>
           <form method="get" action="/">
             <input type="hidden" name="random" value="1" />
             {filter_hidden_inputs}
-            <button class="btn refresh" type="submit">Random</button>
+            <button class="btn refresh" type="submit"><span class="btn-icon" aria-hidden="true">{_ICON_RANDOM}</span>Random</button>
           </form>
         </section>
-        {filter_bar}
       </main>
     </div>
+    <script src="/swipe.js"></script>
   </body>
 </html>"""
         return celebration_html.encode("utf-8")
 
     if not puppies:
         filtered_species_label = _filtered_species_label(normalized_species)
-        empty_msg = (
-            message
-            or (
-                f"No {filtered_species_label} match those filters. Try different filters."
-                if active_filters
-                else "No puppies to show yet. Run scraper and refresh."
-            )
+        empty_msg = message or (
+            f"No {filtered_species_label} match those filters. Try different filters."
+            if active_filters
+            else "No puppies to show yet. Run scraper and refresh."
         )
         if review_passed and not message:
             empty_msg = "No previously passed pets are still available in this filter."
+        ecosystem_empty = _render_ecosystem_section(
+            input_id="subscribe-email-empty",
+            current_photo_index=0,
+            filter_hidden_inputs=filter_hidden_inputs,
+            provider_disclaimer=PROVIDER_DISCLAIMER,
+        )
         no_data = f"""<!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PupSwipe | PuppyPing</title>
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
-  <body>
+{_head_html("PupSwipe | PuppyPing")}
+  <body class="swipe-page">
+    {_PAGE_SHELL_BG}
     <div class="app">
-      <header class="topbar">
-        <div class="brand">
-          <div class="brand-mark">PS</div>
-          <div>
-            <h1>PupSwipe</h1>
-            <p>By PuppyPing</p>
-          </div>
-        </div>
-        <div class="stats">{escape(stats)}</div>
-        {account_actions_html}
-      </header>
+      {topbar_html}
       {onboarding_intro_html}
-      <main>
+      <main class="swipe-main">
+        {filter_bar}
         <section class="stack">
           <div class="state state-empty">{escape(empty_msg)}</div>
         </section>
-        <section class="controls">
+        <section class="controls controls-single">
           <form method="get" action="/">
             <input type="hidden" name="random" value="1" />
             {filter_hidden_inputs}
-            <button class="btn refresh" type="submit">Random</button>
-          </form>
-        </section>
-        {filter_bar}
-        <section class="ecosystem" aria-label="PuppyPing ecosystem">
-          <h3>Get PuppyPing Alerts</h3>
-          <p class="ecosystem-copy">
-            PupSwipe runs inside the PuppyPing ecosystem. Join the PuppyPing email list for new puppy updates.
-          </p>
-          <p class="ecosystem-copy">
-            {escape(PROVIDER_DISCLAIMER)}
-          </p>
-          <form class="subscribe-form" method="post" action="/subscribe">
-            <input type="hidden" name="photo" value="0" />
-            {filter_hidden_inputs}
-            <label class="subscribe-label" for="subscribe-email-empty">Email for PuppyPing alerts</label>
-            <div class="subscribe-row">
-              <input
-                id="subscribe-email-empty"
-                name="email"
-                type="email"
-                inputmode="email"
-                autocomplete="email"
-                placeholder="you@example.com"
-                required
-              />
-              <button class="btn subscribe" type="submit">Join</button>
-            </div>
+            <button class="btn refresh" type="submit"><span class="btn-icon" aria-hidden="true">{_ICON_RANDOM}</span>Random</button>
           </form>
         </section>
       </main>
+      {ecosystem_empty}
     </div>
+    <script src="/swipe.js"></script>
   </body>
 </html>"""
         return no_data.encode("utf-8")
@@ -560,8 +810,12 @@ def _render_page(
     species = escape(
         " ".join(str(pup.get("species") or "dog").split()).strip().lower() or "dog"
     )
+    species_display = escape(
+        (" ".join(str(pup.get("species") or "dog").split()).strip() or "dog").title()
+    )
 
-    name = escape(str(pup.get("name") or "Unnamed pup"))
+    raw_name = str(pup.get("name") or "Unnamed pup")
+    name = escape(raw_name)
     age_raw = escape(str(pup.get("age_raw") or "Age unknown"))
     breed = escape(str(pup.get("breed") or "Unknown breed"))
     gender = escape(str(pup.get("gender") or "Unknown gender"))
@@ -582,22 +836,28 @@ def _render_page(
     if raw_profile_url:
         provider_link_html = (
             f'<a class="profile-link card-profile-link" href="{profile_url}" '
-            f'target="_blank" rel="noopener">View on {provider_name}</a>'
+            f'target="_blank" rel="noopener">View on {provider_name}{_ICON_EXTERNAL}</a>'
         )
     else:
         provider_link_html = f'<span class="provider-missing">{provider_name}</span>'
 
     photo_urls = _get_photo_urls(pup)
     photo_count = len(photo_urls)
+    current_photo_index = photo_index % photo_count if photo_count > 0 else 0
     if photo_count > 0:
-        selected_photo = photo_urls[photo_index % photo_count]
+        selected_photo = photo_urls[current_photo_index]
         image_block = (
-            f'<img src="{escape(selected_photo)}" alt="{name} photo" referrerpolicy="no-referrer" />'
+            f'<img src="{escape(selected_photo)}" alt="{name} photo" '
+            'referrerpolicy="no-referrer" draggable="false" />'
+        )
+        photo_data_attrs = (
+            f' data-photos="{escape(json.dumps(photo_urls))}"'
+            f' data-photo-index="{current_photo_index}"'
         )
     else:
-        initials = "".join(part[0] for part in name.split()[:2]).upper() or "PUP"
-        image_block = f'<div class="photo-fallback">{escape(initials)}</div>'
-    current_photo_index = photo_index % photo_count if photo_count > 0 else 0
+        initials = _safe_initials(raw_name, "PUP")
+        image_block = f'<div class="photo-fallback">{initials}</div>'
+        photo_data_attrs = ""
 
     has_carousel = photo_count > 1
     carousel_pin_url_html = (
@@ -609,30 +869,29 @@ def _render_page(
     if has_carousel:
         prev_photo = (photo_index - 1) % photo_count
         next_photo = (photo_index + 1) % photo_count
-        current_index = photo_index % photo_count
         dots = "".join(
-            f'<span class="carousel-dot{" is-active" if idx == current_index else ""}" aria-hidden="true"></span>'
+            f'<span class="carousel-dot{" is-active" if idx == current_photo_index else ""}" aria-hidden="true"></span>'
             for idx in range(photo_count)
         )
         carousel_controls = f"""
+            <div class="carousel-progress" aria-hidden="true">
+              <div class="carousel-dots">{dots}</div>
+            </div>
             <div class="carousel-controls" aria-label="Photo carousel controls">
               <form method="get" action="/">
                 <input type="hidden" name="photo" value="{prev_photo}" />
                 {carousel_pin_url_html}
                 {filter_hidden_inputs}
-                <button class="carousel-btn" type="submit" aria-label="Previous photo">Prev</button>
+                <button class="carousel-btn carousel-btn-prev" type="submit" aria-label="Previous photo" data-carousel-dir="-1">{_ICON_CHEVRON_LEFT}</button>
               </form>
-              <div class="carousel-middle">
-                <div class="carousel-meta">{current_index + 1} / {photo_count}</div>
-                <div class="carousel-dots" aria-hidden="true">{dots}</div>
-              </div>
               <form method="get" action="/">
                 <input type="hidden" name="photo" value="{next_photo}" />
                 {carousel_pin_url_html}
                 {filter_hidden_inputs}
-                <button class="carousel-btn" type="submit" aria-label="Next photo">Next</button>
+                <button class="carousel-btn carousel-btn-next" type="submit" aria-label="Next photo" data-carousel-dir="1">{_ICON_CHEVRON_RIGHT}</button>
               </form>
             </div>
+            <div class="carousel-meta">{current_photo_index + 1} / {photo_count}</div>
         """
     photo_container_class = "card-photo has-carousel" if has_carousel else "card-photo"
     random_skip_url_html = (
@@ -641,45 +900,31 @@ def _render_page(
         else ""
     )
 
-    info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    info_msg = (
+        f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    )
+    ecosystem_html = _render_ecosystem_section(
+        input_id="subscribe-email",
+        current_photo_index=current_photo_index,
+        filter_hidden_inputs=filter_hidden_inputs,
+        provider_disclaimer=PROVIDER_DISCLAIMER,
+    )
     page_html = f"""<!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PupSwipe | PuppyPing</title>
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
-  <body>
-    <div class="background">
-      <div class="glow glow-a"></div>
-      <div class="glow glow-b"></div>
-      <div class="grid"></div>
-    </div>
+{_head_html("PupSwipe | PuppyPing")}
+  <body class="swipe-page">
+    {_PAGE_SHELL_BG}
 
     <div class="app">
-      <header class="topbar">
-        <div class="brand">
-          <div class="brand-mark">PS</div>
-          <div>
-            <h1>PupSwipe</h1>
-            <p>By PuppyPing</p>
-          </div>
-        </div>
-        <div class="topbar-meta">
-          <div class="stats">{escape(stats)}</div>
-          <a class="profile-link top-profile-link" href="{profile_url}" target="_blank" rel="noopener">Pet details</a>
-        </div>
-        {account_actions_html}
-      </header>
+      {topbar_html}
       {onboarding_intro_html}
-
       {info_msg}
 
-      <main>
+      <main class="swipe-main">
+        {filter_bar}
         <section class="stack">
           <article id="swipe-card" class="card enter" data-swipe-threshold="110">
-            <div class="{photo_container_class}">
+            <div class="{photo_container_class}"{photo_data_attrs}>
               {image_block}
               {carousel_controls}
               <div class="swipe-indicator like">Like</div>
@@ -691,6 +936,7 @@ def _render_page(
                 <span class="age-pill">{age_raw}</span>
               </div>
               <div class="card-facts">
+                <span>{species_display}</span>
                 <span>{breed}</span>
                 <span>{gender}</span>
                 <span>{location}</span>
@@ -718,13 +964,13 @@ def _render_page(
             <input type="hidden" name="source" value="{escaped_swipe_source}" />
             {filter_hidden_inputs}
             <input type="hidden" name="swipe" value="left" />
-            <button class="btn nope" type="submit">Pass</button>
+            <button class="btn nope" type="submit"><span class="btn-icon" aria-hidden="true">{_ICON_PASS}</span>Pass</button>
           </form>
-          <form method="get" action="/">
+          <form id="swipe-random-form" method="get" action="/">
             <input type="hidden" name="random" value="1" />
             {random_skip_url_html}
             {filter_hidden_inputs}
-            <button class="btn refresh" type="submit">Random</button>
+            <button class="btn refresh" type="submit"><span class="btn-icon" aria-hidden="true">{_ICON_RANDOM}</span>Random</button>
           </form>
           <form id="swipe-like-form" method="post" action="/swipe">
             <input type="hidden" name="dog_id" value="{dog_id}" />
@@ -732,40 +978,18 @@ def _render_page(
             <input type="hidden" name="source" value="{escaped_swipe_source}" />
             {filter_hidden_inputs}
             <input type="hidden" name="swipe" value="right" />
-            <button class="btn like" type="submit">Like</button>
+            <button class="btn like" type="submit"><span class="btn-icon" aria-hidden="true">{_ICON_HEART}</span>Like</button>
           </form>
         </section>
+        <p class="kbd-hints" aria-hidden="true">
+          <kbd>&larr;</kbd> Pass <span>&middot;</span>
+          <kbd>&rarr;</kbd> Like <span>&middot;</span>
+          <kbd>R</kbd> Random <span>&middot;</span>
+          <kbd>Space</kbd> Photo
+        </p>
       </main>
 
-      {filter_bar}
-
-      <section class="ecosystem" aria-label="PuppyPing ecosystem">
-        <h3>Get PuppyPing Alerts</h3>
-        <p class="ecosystem-copy">
-          PupSwipe is part of the PuppyPing ecosystem. Join PuppyPing email alerts to get fresh puppy updates.
-        </p>
-        <p class="ecosystem-copy">
-          {escape(PROVIDER_DISCLAIMER)}
-        </p>
-        <form class="subscribe-form" method="post" action="/subscribe">
-          <input type="hidden" name="photo" value="{current_photo_index}" />
-          {filter_hidden_inputs}
-          <label class="subscribe-label" for="subscribe-email">Email for PuppyPing alerts</label>
-          <div class="subscribe-row">
-            <input
-              id="subscribe-email"
-              name="email"
-              type="email"
-              inputmode="email"
-              autocomplete="email"
-              placeholder="you@example.com"
-              required
-            />
-            <button class="btn subscribe" type="submit">Join</button>
-          </div>
-        </form>
-      </section>
-
+      {ecosystem_html}
     </div>
     <script src="/swipe.js"></script>
   </body>
@@ -836,38 +1060,31 @@ def _render_catalog_page(
         catalog_filter_hidden_inputs.append(
             f'<input type="hidden" name="max_age" value="{escape(f"{normalized_max_age_months:g}")}" />'
         )
-    catalog_filter_hidden_inputs_html = "\n                ".join(catalog_filter_hidden_inputs)
-    escaped_signed_in_email = escape(signed_in_email) if signed_in_email else ""
-
-    if signed_in_email:
-        account_actions_html = f"""
-          <div class="account-actions">
-            <span class="account-email">{escaped_signed_in_email}</span>
-            <a class="profile-link" href="/likes">Liked pups</a>
-            <a class="profile-link" href="/reset-password">Reset password</a>
-            <form class="inline-form" method="post" action="/signout">
-              <input type="hidden" name="next" value="/catalog" />
-              <button class="btn subtle" type="submit">Sign out</button>
-            </form>
-          </div>
-        """
-    else:
-        signin_query = urlencode({"next": "/catalog"})
-        account_actions_html = (
-            f'<a class="profile-link account-link" href="/signin?{signin_query}">'
-            "Sign in to save likes"
-            "</a>"
-        )
-
-    active_filters = any(
-        (
-            normalized_breed,
-            normalized_name,
-            normalized_provider,
-            normalized_species,
-            normalized_max_age_months != MAX_PUPPY_AGE_MONTHS,
-        )
+    catalog_filter_hidden_inputs_html = "\n                ".join(
+        catalog_filter_hidden_inputs
     )
+
+    topbar_html = _render_topbar(
+        active_nav="catalog",
+        title="Pet Catalog",
+        subtitle="Available pets across providers",
+        signed_in_email=signed_in_email,
+        signin_next="/catalog",
+        signout_next="/catalog",
+    )
+
+    active_filters: list[str] = []
+    if normalized_breed:
+        active_filters.append(f"Breed: {normalized_breed}")
+    if normalized_name:
+        active_filters.append(f"Name: {normalized_name}")
+    if normalized_provider:
+        active_filters.append(f"Provider: {_provider_name(normalized_provider, None)}")
+    if normalized_species:
+        active_filters.append(f"Species: {normalized_species.title()}")
+    if normalized_max_age_months != MAX_PUPPY_AGE_MONTHS:
+        active_filters.append(f"Max age: {normalized_max_age_months:g} mo")
+
     shown_count = len(puppies)
     stats = (
         f"{shown_count} shown of {total_available} available"
@@ -878,105 +1095,38 @@ def _render_catalog_page(
     clear_filter_html = ""
     if active_filters:
         clear_query = urlencode({"clear_filters": "1"})
-        clear_filter_html = f'<a class="clear-filter" href="/catalog?{clear_query}">Clear</a>'
-
-    provider_options = ['<option value="">All providers</option>']
-    for source in PUPSWIPE_SOURCES:
-        selected_attr = " selected" if source == normalized_provider else ""
-        provider_options.append(
-            f'<option value="{escape(source)}"{selected_attr}>{escape(_provider_name(source))}</option>'
+        clear_filter_html = (
+            f'<a class="clear-filter" href="/catalog?{clear_query}">Clear</a>'
         )
-    provider_options_html = "".join(provider_options)
 
-    species_option_values = ["", "dog", "cat", "rabbit", "bird", "other"]
-    if normalized_species and normalized_species not in species_option_values:
-        species_option_values.append(normalized_species)
-    species_options_html = "".join(
-        (
-            f'<option value="{escape(value)}"'
-            f'{" selected" if value == normalized_species else ""}>'
-            f'{escape("All species" if value == "" else value.title())}</option>'
-        )
-        for value in species_option_values
+    provider_options_html = _provider_options_html(
+        PUPSWIPE_SOURCES, normalized_provider, _provider_name
     )
+    species_options_html = _species_options_html(normalized_species)
 
-    filter_bar = f"""
-      <section class="filter-strip" aria-label="Catalog filters">
-        <form
-          id="catalog-filter-form"
-          class="breed-filter-form"
-          method="get"
-          action="/catalog"
-          data-auto-filter="1"
-        >
-          <div class="filter-field">
-            <label for="catalog-breed-filter">Breed</label>
-            <input
-              id="catalog-breed-filter"
-              name="breed"
-              type="text"
-              value="{escaped_breed}"
-              placeholder="e.g. Labrador"
-              maxlength="{MAX_BREED_FILTER_LENGTH}"
-              onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()"
-            />
-          </div>
-          <div class="filter-field">
-            <label for="catalog-name-filter">Name</label>
-            <input
-              id="catalog-name-filter"
-              name="name"
-              type="text"
-              value="{escaped_name}"
-              placeholder="e.g. Nova"
-              maxlength="{MAX_NAME_FILTER_LENGTH}"
-              onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()"
-            />
-          </div>
-          <div class="filter-field">
-            <label for="catalog-species-filter">Species</label>
-            <select
-              id="catalog-species-filter"
-              name="species"
-              onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()"
-            >
-              {species_options_html}
-            </select>
-          </div>
-          <div class="filter-field">
-            <label for="catalog-provider-filter">Provider</label>
-            <select
-              id="catalog-provider-filter"
-              name="provider"
-              onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()"
-            >
-              {provider_options_html}
-            </select>
-          </div>
-          <div class="filter-field">
-            <label for="catalog-max-age-filter">Max age (months)</label>
-            <input
-              id="catalog-max-age-filter"
-              name="max_age"
-              type="number"
-              min="0.5"
-              max="120"
-              step="0.5"
-              value="{escaped_max_age}"
-              data-auto-submit-delay-ms="1200"
-              inputmode="decimal"
-              onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()"
-            />
-          </div>
-          {clear_filter_html}
-        </form>
-      </section>
-    """
+    filter_bar = _render_filter_bar(
+        form_id="catalog-filter-form",
+        id_prefix="catalog-",
+        action="/catalog",
+        aria_label="Catalog filters",
+        stats_text=stats,
+        active_filter_chips=active_filters,
+        breed_value=escaped_breed,
+        name_value=escaped_name,
+        species_options_html=species_options_html,
+        provider_options_html=provider_options_html,
+        max_age_value=escaped_max_age,
+        max_breed_len=MAX_BREED_FILTER_LENGTH,
+        max_name_len=MAX_NAME_FILTER_LENGTH,
+        clear_filter_html=clear_filter_html,
+        open_by_default=True,
+    )
 
     cards_html = ""
     for pup in puppies:
         pet_id = _safe_int(str(pup.get("pet_id") or pup.get("dog_id")), 0)
-        pet_name = escape(str(pup.get("name") or "Unnamed pet"))
+        raw_pet_name = str(pup.get("name") or "Unnamed pet")
+        pet_name = escape(raw_pet_name)
         pet_species = (
             " ".join(str(pup.get("species") or "pet").split()).strip().lower() or "pet"
         )
@@ -995,32 +1145,41 @@ def _render_catalog_page(
         photo_url = _get_primary_image(pup)
         if photo_url:
             image_html = (
-                f'<img src="{escape(photo_url)}" alt="{pet_name} photo" referrerpolicy="no-referrer" />'
+                f'<img src="{escape(photo_url)}" alt="{pet_name} photo" '
+                'loading="lazy" referrerpolicy="no-referrer" />'
             )
         else:
-            initials = "".join(part[0] for part in str(pet_name).split()[:2]).upper() or "PET"
-            image_html = f'<div class="photo-fallback">{escape(initials)}</div>'
+            initials = _safe_initials(raw_pet_name, "PET")
+            image_html = f'<div class="photo-fallback">{initials}</div>'
 
         if raw_profile_url:
             link_html = (
                 f'<a class="profile-link" href="{profile_url}" target="_blank" rel="noopener">'
-                "Open adoption site</a>"
+                f"Open adoption site{_ICON_EXTERNAL}</a>"
             )
         else:
             link_html = f'<span class="provider-missing">{provider_name}</span>'
 
         cards_html += f"""
           <article class="liked-card catalog-card">
-            <div class="liked-photo">{image_html}</div>
+            <div class="liked-photo">
+              {image_html}
+              <span class="photo-chip">{species_badge}</span>
+            </div>
             <div class="liked-body">
-              <h3>{pet_name}</h3>
+              <div class="card-title-compact">
+                <h3>{pet_name}</h3>
+                <span class="age-pill">{pet_age}</span>
+              </div>
               <p class="liked-meta">{species_badge} &middot; {pet_breed} &middot; {pet_age} &middot; {pet_location}</p>
               <div class="badges">
                 <span class="badge">{pet_status}</span>
                 <span class="badge badge-provider">{provider_name}</span>
               </div>
-              <p class="liked-time">Updated at {scraped_at_copy}</p>
-              <p class="liked-id">Pet ID: {pet_id}</p>
+              <div class="card-footnote">
+                <span class="liked-time">Updated at {scraped_at_copy}</span>
+                <span class="liked-id">Pet ID: {pet_id}</span>
+              </div>
               <div class="liked-actions">
                 {link_html}
                 <form class="inline-form" method="post" action="/catalog/like">
@@ -1029,22 +1188,20 @@ def _render_catalog_page(
                   <input type="hidden" name="source" value="{escape(swipe_source)}" />
                   {catalog_filter_hidden_inputs_html}
                   {catalog_filter_hash_inputs_html}
-                  <button class="btn like" type="submit">Like</button>
+                  <button class="btn like" type="submit"><span class="btn-icon" aria-hidden="true">{_ICON_HEART}</span>Like</button>
                 </form>
               </div>
             </div>
           </article>
         """
 
+    has_cards = bool(cards_html)
     if not cards_html:
         filtered_species_label = _filtered_species_label(normalized_species)
-        empty_copy = (
-            message
-            or (
-                f"No {filtered_species_label} match those filters. Try different filters."
-                if active_filters
-                else "No pets available right now."
-            )
+        empty_copy = message or (
+            f"No {filtered_species_label} match those filters. Try different filters."
+            if active_filters
+            else "No pets available right now."
         )
         cards_html = f"""
           <div class="state state-empty">
@@ -1052,36 +1209,18 @@ def _render_catalog_page(
           </div>
         """
 
-    info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message and cards_html else ""
+    info_msg = (
+        f'<div class="flash" role="status">{escape(message)}</div>'
+        if message and has_cards
+        else ""
+    )
     page_html = f"""<!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Pet Catalog | PupSwipe</title>
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
-  <body>
-    <div class="background">
-      <div class="glow glow-a"></div>
-      <div class="glow glow-b"></div>
-      <div class="grid"></div>
-    </div>
+{_head_html("Pet Catalog | PupSwipe")}
+  <body class="catalog-page">
+    {_PAGE_SHELL_BG}
     <div class="app">
-      <header class="topbar">
-        <div class="brand">
-          <div class="brand-mark">PS</div>
-          <div>
-            <h1>Pet Catalog</h1>
-            <p>Available pets across providers</p>
-          </div>
-        </div>
-        <div class="topbar-meta">
-          <div class="stats">{stats}</div>
-          <a class="profile-link top-profile-link" href="/">Back to PupSwipe</a>
-        </div>
-        {account_actions_html}
-      </header>
+      {topbar_html}
       {info_msg}
       <main>
         {filter_bar}
@@ -1112,7 +1251,17 @@ def _render_signin_page(
 
     safe_next = _normalize_next_path(next_path, "/likes")
     escaped_email = escape(email_value)
-    info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    info_msg = (
+        f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    )
+    topbar_html = _render_topbar(
+        active_nav="signin",
+        title="PupSwipe",
+        subtitle="Sign in to save your likes",
+        signed_in_email=signed_in_email,
+        signout_next="/signin",
+        show_signin_cta=False,
+    )
 
     if signed_in_email:
         account_line = f"""
@@ -1122,40 +1271,26 @@ def _render_signin_page(
           </p>
         """
     else:
-        account_line = (
-            '<p class="auth-copy">Use email + password. First sign-in creates your account.</p>'
-        )
+        account_line = '<p class="auth-copy">Use email + password. First sign-in creates your account.</p>'
 
     page_html = f"""<!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Sign In | PupSwipe</title>
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
+{_head_html("Sign In | PupSwipe")}
   <body class="signin-page">
-    <div class="background">
-      <div class="glow glow-a"></div>
-      <div class="glow glow-b"></div>
-      <div class="grid"></div>
-    </div>
+    {_PAGE_SHELL_BG}
     <div class="app">
-      <header class="topbar">
-        <div class="brand">
-          <div class="brand-mark">PS</div>
-          <div>
-            <h1>PupSwipe</h1>
-            <p>Sign in to save your likes</p>
-          </div>
-        </div>
-      </header>
+      {topbar_html}
       {info_msg}
       <main>
         <section class="auth-shell">
           <article class="auth-card">
-            <h2>Sign in</h2>
-            {account_line}
+            <div class="auth-header">
+              <div class="auth-badge" aria-hidden="true">{_ICON_PAW}</div>
+              <div>
+                <h2>Sign in</h2>
+                {account_line}
+              </div>
+            </div>
             <form class="auth-form" method="post" action="/signin">
               <input type="hidden" name="next" value="{escape(safe_next)}" />
               <label for="signin-email">Email address</label>
@@ -1188,6 +1323,7 @@ def _render_signin_page(
         </section>
       </main>
     </div>
+    <script src="/swipe.js"></script>
   </body>
 </html>"""
     return page_html.encode("utf-8")
@@ -1198,38 +1334,34 @@ def _render_forgot_password_page(
     email_value: str = "",
 ) -> bytes:
     """Render forgot-password request page."""
-    info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    info_msg = (
+        f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    )
     escaped_email = escape(email_value)
+    topbar_html = _render_topbar(
+        active_nav="auth",
+        title="PupSwipe",
+        subtitle="Forgot password",
+        show_signin_cta=False,
+    )
     page_html = f"""<!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Forgot Password | PupSwipe</title>
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
+{_head_html("Forgot Password | PupSwipe")}
   <body>
-    <div class="background">
-      <div class="glow glow-a"></div>
-      <div class="glow glow-b"></div>
-      <div class="grid"></div>
-    </div>
+    {_PAGE_SHELL_BG}
     <div class="app">
-      <header class="topbar">
-        <div class="brand">
-          <div class="brand-mark">PS</div>
-          <div>
-            <h1>PupSwipe</h1>
-            <p>Forgot password</p>
-          </div>
-        </div>
-      </header>
+      {topbar_html}
       {info_msg}
       <main>
         <section class="auth-shell">
           <article class="auth-card">
-            <h2>Reset via email</h2>
-            <p class="auth-copy">Enter your account email and we will send a reset link.</p>
+            <div class="auth-header">
+              <div class="auth-badge" aria-hidden="true">{_ICON_PAW}</div>
+              <div>
+                <h2>Reset via email</h2>
+                <p class="auth-copy">Enter your account email and we will send a reset link.</p>
+              </div>
+            </div>
             <form class="auth-form" method="post" action="/forgot-password">
               <label for="forgot-email">Email address</label>
               <input
@@ -1244,11 +1376,15 @@ def _render_forgot_password_page(
               />
               <button class="btn like" type="submit">Send reset link</button>
             </form>
-            <a class="profile-link" href="/signin">Back to sign in</a>
+            <div class="auth-links">
+              <a class="profile-link" href="/signin">Back to sign in</a>
+              <a class="profile-link" href="/">Back to PupSwipe</a>
+            </div>
           </article>
         </section>
       </main>
     </div>
+    <script src="/swipe.js"></script>
   </body>
 </html>"""
     return page_html.encode("utf-8")
@@ -1263,36 +1399,33 @@ def _render_forgot_password_reset_page(
     """Render reset-password-by-token page."""
     PASSWORD_MIN_LENGTH = deps.password_min_length
 
-    info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    info_msg = (
+        f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    )
+    topbar_html = _render_topbar(
+        active_nav="auth",
+        title="PupSwipe",
+        subtitle="Set new password",
+        show_signin_cta=False,
+    )
     page_html = f"""<!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Set New Password | PupSwipe</title>
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
+{_head_html("Set New Password | PupSwipe")}
   <body>
-    <div class="background">
-      <div class="glow glow-a"></div>
-      <div class="glow glow-b"></div>
-      <div class="grid"></div>
-    </div>
+    {_PAGE_SHELL_BG}
     <div class="app">
-      <header class="topbar">
-        <div class="brand">
-          <div class="brand-mark">PS</div>
-          <div>
-            <h1>PupSwipe</h1>
-            <p>Set new password</p>
-          </div>
-        </div>
-      </header>
+      {topbar_html}
       {info_msg}
       <main>
         <section class="auth-shell">
           <article class="auth-card">
-            <h2>Choose a new password</h2>
+            <div class="auth-header">
+              <div class="auth-badge" aria-hidden="true">{_ICON_PAW}</div>
+              <div>
+                <h2>Choose a new password</h2>
+                <p class="auth-copy">Pick a fresh password for your PupSwipe profile.</p>
+              </div>
+            </div>
             <form class="auth-form" method="post" action="/forgot-password/reset">
               <input type="hidden" name="token" value="{escape(token)}" />
               <label for="new-password">New password</label>
@@ -1315,11 +1448,15 @@ def _render_forgot_password_reset_page(
               />
               <button class="btn like" type="submit">Set password</button>
             </form>
-            <a class="profile-link" href="/signin">Back to sign in</a>
+            <div class="auth-links">
+              <a class="profile-link" href="/signin">Back to sign in</a>
+              <a class="profile-link" href="/">Back to PupSwipe</a>
+            </div>
           </article>
         </section>
       </main>
     </div>
+    <script src="/swipe.js"></script>
   </body>
 </html>"""
     return page_html.encode("utf-8")
@@ -1334,37 +1471,34 @@ def _render_reset_password_page(
     """Render reset-password page for a signed-in user."""
     PASSWORD_MIN_LENGTH = deps.password_min_length
 
-    info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    info_msg = (
+        f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    )
+    topbar_html = _render_topbar(
+        active_nav="auth",
+        title="PupSwipe",
+        subtitle="Reset your password",
+        signed_in_email=signed_in_email,
+        signout_next="/signin",
+    )
     page_html = f"""<!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Reset Password | PupSwipe</title>
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
+{_head_html("Reset Password | PupSwipe")}
   <body>
-    <div class="background">
-      <div class="glow glow-a"></div>
-      <div class="glow glow-b"></div>
-      <div class="grid"></div>
-    </div>
+    {_PAGE_SHELL_BG}
     <div class="app">
-      <header class="topbar">
-        <div class="brand">
-          <div class="brand-mark">PS</div>
-          <div>
-            <h1>PupSwipe</h1>
-            <p>Reset your password</p>
-          </div>
-        </div>
-      </header>
+      {topbar_html}
       {info_msg}
       <main>
         <section class="auth-shell">
           <article class="auth-card">
-            <h2>Reset password</h2>
-            <p class="auth-copy">Signed in as <strong>{escape(signed_in_email)}</strong></p>
+            <div class="auth-header">
+              <div class="auth-badge" aria-hidden="true">{_ICON_PAW}</div>
+              <div>
+                <h2>Reset password</h2>
+                <p class="auth-copy">Signed in as <strong>{escape(signed_in_email)}</strong></p>
+              </div>
+            </div>
             <form class="auth-form" method="post" action="/reset-password">
               <label for="current-password">Current password</label>
               <input
@@ -1394,11 +1528,14 @@ def _render_reset_password_page(
               />
               <button class="btn like" type="submit">Update password</button>
             </form>
-            <a class="profile-link" href="/likes">Back to liked puppies</a>
+            <div class="auth-links">
+              <a class="profile-link" href="/likes">Back to liked puppies</a>
+            </div>
           </article>
         </section>
       </main>
     </div>
+    <script src="/swipe.js"></script>
   </body>
 </html>"""
     return page_html.encode("utf-8")
@@ -1453,14 +1590,16 @@ def _render_likes_page(
     escaped_name_filter = escape(normalized_name)
     escaped_breed_filter = escape(normalized_breed)
 
-    active_filters = any(
-        (
-            normalized_name,
-            normalized_breed,
-            normalized_species,
-            normalized_provider,
-        )
-    )
+    active_filters: list[str] = []
+    if normalized_name:
+        active_filters.append(f"Name: {normalized_name}")
+    if normalized_breed:
+        active_filters.append(f"Breed: {normalized_breed}")
+    if normalized_species:
+        active_filters.append(f"Species: {normalized_species.title()}")
+    if normalized_provider:
+        active_filters.append(f"Provider: {_provider_name(normalized_provider, None)}")
+
     shown_count = filtered_likes if filtered_likes is not None else len(puppies)
     stats_copy = (
         f"{shown_count} shown of {total_likes} liked"
@@ -1468,25 +1607,10 @@ def _render_likes_page(
         else f"{total_likes} liked"
     )
 
-    provider_options = ['<option value="">All providers</option>']
-    for source in PUPSWIPE_SOURCES:
-        selected_attr = " selected" if source == normalized_provider else ""
-        provider_options.append(
-            f'<option value="{escape(source)}"{selected_attr}>{escape(_provider_name(source))}</option>'
-        )
-    provider_options_html = "".join(provider_options)
-
-    species_option_values = ["", "dog", "cat", "rabbit", "bird", "other"]
-    if normalized_species and normalized_species not in species_option_values:
-        species_option_values.append(normalized_species)
-    species_options_html = "".join(
-        (
-            f'<option value="{escape(value)}"'
-            f'{" selected" if value == normalized_species else ""}>'
-            f'{escape("All species" if value == "" else value.title())}</option>'
-        )
-        for value in species_option_values
+    provider_options_html = _provider_options_html(
+        PUPSWIPE_SOURCES, normalized_provider, _provider_name
     )
+    species_options_html = _species_options_html(normalized_species)
 
     clear_link_html = (
         '<a class="clear-filter" href="/likes">Clear</a>' if active_filters else ""
@@ -1508,47 +1632,78 @@ def _render_likes_page(
         likes_filter_hidden_inputs.append(
             f'<input type="hidden" name="provider" value="{escape(normalized_provider)}" />'
         )
-    likes_filter_hidden_inputs_html = "\n              ".join(likes_filter_hidden_inputs)
+    likes_filter_hidden_inputs_html = "\n              ".join(
+        likes_filter_hidden_inputs
+    )
+    likes_chips_html = ""
+    if active_filters:
+        likes_chips_items = "".join(
+            f'<span class="filter-chip">{escape(chip)}</span>'
+            for chip in active_filters
+        )
+        likes_chips_html = (
+            f'<span class="active-filter-chips">{likes_chips_items}</span>'
+        )
+    likes_count_badge = (
+        f'<span class="filter-count">{len(active_filters)}</span>'
+        if active_filters
+        else ""
+    )
+
     likes_filter_bar = f"""
       <section class="likes-filter-strip" aria-label="Liked pet filters">
-        <form class="likes-filter-form" method="get" action="/likes">
-          <div class="likes-filter-field">
-            <label for="likes-name-filter">Name</label>
-            <input
-              id="likes-name-filter"
-              name="name"
-              type="text"
-              value="{escaped_name_filter}"
-              placeholder="e.g. Nova"
-              maxlength="{MAX_NAME_FILTER_LENGTH}"
-            />
-          </div>
-          <div class="likes-filter-field">
-            <label for="likes-breed-filter">Breed</label>
-            <input
-              id="likes-breed-filter"
-              name="breed"
-              type="text"
-              value="{escaped_breed_filter}"
-              placeholder="e.g. Labrador"
-              maxlength="{MAX_BREED_FILTER_LENGTH}"
-            />
-          </div>
-          <div class="likes-filter-field">
-            <label for="likes-species-filter">Species</label>
-            <select id="likes-species-filter" name="species">
-              {species_options_html}
-            </select>
-          </div>
-          <div class="likes-filter-field">
-            <label for="likes-provider-filter">Provider</label>
-            <select id="likes-provider-filter" name="provider">
-              {provider_options_html}
-            </select>
-          </div>
-          <button class="btn filter" type="submit">Filter</button>
-          {clear_link_html}
-        </form>
+        <details class="filter-drawer" open>
+          <summary class="filter-drawer-summary">
+            <span class="filter-summary-left">
+              <span class="stats">{escape(stats_copy)}</span>
+              {likes_chips_html}
+            </span>
+            <span class="filter-toggle-pill">
+              {_ICON_FILTER}
+              <span>Filters</span>
+              {likes_count_badge}
+              {_ICON_CHEVRON_DOWN}
+            </span>
+          </summary>
+          <form class="likes-filter-form" method="get" action="/likes">
+            <div class="likes-filter-field">
+              <label for="likes-name-filter">Name</label>
+              <input
+                id="likes-name-filter"
+                name="name"
+                type="text"
+                value="{escaped_name_filter}"
+                placeholder="e.g. Nova"
+                maxlength="{MAX_NAME_FILTER_LENGTH}"
+              />
+            </div>
+            <div class="likes-filter-field">
+              <label for="likes-breed-filter">Breed</label>
+              <input
+                id="likes-breed-filter"
+                name="breed"
+                type="text"
+                value="{escaped_breed_filter}"
+                placeholder="e.g. Labrador"
+                maxlength="{MAX_BREED_FILTER_LENGTH}"
+              />
+            </div>
+            <div class="likes-filter-field">
+              <label for="likes-species-filter">Species</label>
+              <select id="likes-species-filter" name="species">
+                {species_options_html}
+              </select>
+            </div>
+            <div class="likes-filter-field">
+              <label for="likes-provider-filter">Provider</label>
+              <select id="likes-provider-filter" name="provider">
+                {provider_options_html}
+              </select>
+            </div>
+            <button class="btn filter" type="submit">Filter</button>
+            {clear_link_html}
+          </form>
+        </details>
       </section>
     """
     bulk_actions_html = f"""
@@ -1568,7 +1723,7 @@ def _render_likes_page(
           <input type="hidden" name="mode" value="all" />
           {likes_filter_hidden_inputs_html}
           <button
-            class="btn subtle"
+            class="btn subtle danger"
             type="submit"
             onclick="return confirm('Remove all pets in this liked view?');"
           >
@@ -1578,11 +1733,14 @@ def _render_likes_page(
       </section>
     """
 
-    info_msg = f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    info_msg = (
+        f'<div class="flash" role="status">{escape(message)}</div>' if message else ""
+    )
     cards_html = ""
     for pup in puppies:
         dog_id = _safe_int(str(pup.get("pet_id") or pup.get("dog_id")), 0)
-        name = escape(str(pup.get("name") or "Unnamed pup"))
+        raw_name = str(pup.get("name") or "Unnamed pup")
+        name = escape(raw_name)
         breed = escape(str(pup.get("breed") or "Unknown breed"))
         age_raw = escape(str(pup.get("age_raw") or "Age unknown"))
         location = escape(str(pup.get("location") or "Unknown location"))
@@ -1600,20 +1758,30 @@ def _render_likes_page(
         photo_url = _get_primary_image(pup)
         if photo_url:
             image_html = (
-                f'<img src="{escape(photo_url)}" alt="{name} photo" referrerpolicy="no-referrer" />'
+                f'<img src="{escape(photo_url)}" alt="{name} photo" '
+                'loading="lazy" referrerpolicy="no-referrer" />'
             )
         else:
-            initials = "".join(part[0] for part in str(name).split()[:2]).upper() or "PUP"
-            image_html = f'<div class="photo-fallback">{escape(initials)}</div>'
+            initials = _safe_initials(raw_name, "PUP")
+            image_html = f'<div class="photo-fallback">{initials}</div>'
+
+        remove_form_html = f"""
+                <form class="inline-form" method="post" action="/likes/remove">
+                  <input type="hidden" name="pet_id" value="{dog_id}" />
+                  <input type="hidden" name="pet_species" value="{escape(pet_species)}" />
+                  {likes_filter_hidden_inputs_html}
+                  <button class="btn subtle danger" type="submit"><span class="btn-icon" aria-hidden="true">{_ICON_TRASH}</span>Remove</button>
+                </form>"""
 
         if raw_profile_url:
             link_html = (
                 f'<a class="profile-link" href="{profile_url}" target="_blank" rel="noopener">'
-                f"Open on {provider_name}</a>"
+                f"Open on {provider_name}{_ICON_EXTERNAL}</a>"
             )
             share_title_raw = str(pup.get("name") or "this pet").strip() or "this pet"
             share_animal_raw = (
-                " ".join(str(pup.get("species") or "pet").split()).strip().lower() or "pet"
+                " ".join(str(pup.get("species") or "pet").split()).strip().lower()
+                or "pet"
             )
             share_body = (
                 f"I found a cute {share_animal_raw} on PupSwipe. "
@@ -1634,16 +1802,9 @@ def _render_likes_page(
                   data-share-url="{escape(raw_profile_url)}"
                   data-share-title="{escape(share_title_raw)}"
                   data-share-text="{escape(share_body)}"
-                >
-                  Copy Share
-                </button>
+                ><span class="btn-icon" aria-hidden="true">{_ICON_SHARE}</span><span class="share-label">Copy Share</span></button>
                 <a class="profile-link" href="mailto:?{mailto_query}">Email</a>
-                <form class="inline-form" method="post" action="/likes/remove">
-                  <input type="hidden" name="pet_id" value="{dog_id}" />
-                  <input type="hidden" name="pet_species" value="{escape(pet_species)}" />
-                  {likes_filter_hidden_inputs_html}
-                  <button class="btn subtle danger" type="submit">Remove</button>
-                </form>
+                {remove_form_html}
               </div>
             """
         else:
@@ -1651,12 +1812,7 @@ def _render_likes_page(
             share_actions_html = f"""
               <div class="liked-actions">
                 {link_html}
-                <form class="inline-form" method="post" action="/likes/remove">
-                  <input type="hidden" name="pet_id" value="{dog_id}" />
-                  <input type="hidden" name="pet_species" value="{escape(pet_species)}" />
-                  {likes_filter_hidden_inputs_html}
-                  <button class="btn subtle danger" type="submit">Remove</button>
-                </form>
+                {remove_form_html}
               </div>
             """
 
@@ -1664,15 +1820,20 @@ def _render_likes_page(
           <article class="{card_class}">
             <div class="liked-photo">{image_html}</div>
             <div class="liked-body">
-              <h3>{name}</h3>
+              <div class="card-title-compact">
+                <h3>{name}</h3>
+                <span class="age-pill">{age_raw}</span>
+              </div>
               <p class="liked-meta">{breed} &middot; {age_raw} &middot; {location}</p>
               <div class="badges">
                 <span class="badge">{status}</span>
                 <span class="badge badge-provider">{provider_name}</span>
                 {'<span class="badge badge-unavailable">No longer available</span>' if not is_available_now else ''}
               </div>
-              <p class="liked-time">Liked at {liked_at}</p>
-              <p class="liked-id">Pet ID: {dog_id}</p>
+              <div class="card-footnote">
+                <span class="liked-time">Liked at {liked_at}</span>
+                <span class="liked-id">Pet ID: {dog_id}</span>
+              </div>
               {share_actions_html}
             </div>
           </article>
@@ -1690,88 +1851,21 @@ def _render_likes_page(
           </div>
         """
 
-    share_script = """
-      <script>
-        (() => {
-          const buttons = document.querySelectorAll(".share-btn");
-          if (!buttons.length) {
-            return;
-          }
-          buttons.forEach((btn) => {
-            const defaultLabel = btn.textContent || "Share";
-            btn.addEventListener("click", async () => {
-              const url = (btn.dataset.shareUrl || "").trim();
-              const title = (btn.dataset.shareTitle || "Pet profile").trim();
-              const shareText = (
-                btn.dataset.shareText ||
-                `I found a cute pet on PupSwipe. Adoption site: ${url}`
-              ).trim();
-              if (!url) {
-                return;
-              }
-              try {
-                if (navigator.share) {
-                  await navigator.share({ title, text: shareText, url });
-                  return;
-                }
-              } catch {
-                // fall through to copy/prompt
-              }
-              try {
-                if (navigator.clipboard && window.isSecureContext) {
-                  await navigator.clipboard.writeText(shareText);
-                  btn.textContent = "Copied";
-                  window.setTimeout(() => {
-                    btn.textContent = defaultLabel;
-                  }, 1200);
-                  return;
-                }
-              } catch {
-                // fall through to prompt
-              }
-              window.prompt("Copy this share message", shareText);
-            });
-          });
-        })();
-      </script>
-    """
+    topbar_html = _render_topbar(
+        active_nav="likes",
+        title="Liked Puppies",
+        subtitle="Your saved favorites",
+        signed_in_email=email,
+        signout_next="/signin",
+    )
 
     page_html = f"""<!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Liked Puppies | PupSwipe</title>
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
-  <body>
-    <div class="background">
-      <div class="glow glow-a"></div>
-      <div class="glow glow-b"></div>
-      <div class="grid"></div>
-    </div>
+{_head_html("Liked Puppies | PupSwipe")}
+  <body class="likes-page">
+    {_PAGE_SHELL_BG}
     <div class="app">
-      <header class="topbar">
-        <div class="brand">
-          <div class="brand-mark">PS</div>
-          <div>
-            <h1>Liked Puppies</h1>
-            <p>{escape(email)}</p>
-          </div>
-        </div>
-        <div class="topbar-meta">
-          <div class="stats">{stats_copy}</div>
-          <a class="profile-link top-profile-link" href="/">Back to PupSwipe</a>
-        </div>
-        <div class="account-actions">
-          <span class="account-email">{escape(email)}</span>
-          <a class="profile-link" href="/reset-password">Reset password</a>
-          <form class="inline-form" method="post" action="/signout">
-            <input type="hidden" name="next" value="/signin" />
-            <button class="btn subtle" type="submit">Sign out</button>
-          </form>
-        </div>
-      </header>
+      {topbar_html}
       {info_msg}
       <main>
         {likes_filter_bar}
@@ -1783,7 +1877,7 @@ def _render_likes_page(
         </section>
       </main>
     </div>
-    {share_script}
+    <script src="/swipe.js"></script>
   </body>
 </html>"""
     return page_html.encode("utf-8")

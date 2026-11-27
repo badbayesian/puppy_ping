@@ -106,6 +106,7 @@ def _extract_description(soup: BeautifulSoup) -> Optional[str]:
     Returns:
         Profile description or None.
     """
+
     def _trim_tail(text: str) -> str:
         cleaned = _clean(text)
         lowered = cleaned.lower()
@@ -279,6 +280,7 @@ def _extract_media(soup: BeautifulSoup, page_url: str) -> PetMedia:
     Returns:
         Extracted media bundle.
     """
+
     def _is_petango_photo(url: str) -> bool:
         return "g.petango.com/photos/" in url.lower()
 
@@ -286,7 +288,9 @@ def _extract_media(soup: BeautifulSoup, page_url: str) -> PetMedia:
         normalized = url.strip()
         normalized = normalized.replace("https:http://", "https://")
         normalized = normalized.replace("https:https://", "https://")
-        normalized = re.sub(r"^http://g\.petango\.com/", "https://g.petango.com/", normalized)
+        normalized = re.sub(
+            r"^http://g\.petango\.com/", "https://g.petango.com/", normalized
+        )
         return normalized
 
     images = set()
@@ -303,7 +307,9 @@ def _extract_media(soup: BeautifulSoup, page_url: str) -> PetMedia:
             images.add(href)
         photo_match = re.search(r"loadPhoto\('([^']+)'\)", onclick)
         if photo_match:
-            photo_url = _canonical_petango_photo(urljoin(page_url, photo_match.group(1)))
+            photo_url = _canonical_petango_photo(
+                urljoin(page_url, photo_match.group(1))
+            )
             if _is_petango_photo(photo_url):
                 images.add(photo_url)
 
@@ -323,7 +329,9 @@ def _extract_media(soup: BeautifulSoup, page_url: str) -> PetMedia:
 
     meta_image = soup.find("meta", attrs={"property": "og:image"})
     if meta_image and meta_image.get("content"):
-        image_url = _canonical_petango_photo(urljoin(page_url, str(meta_image["content"])))
+        image_url = _canonical_petango_photo(
+            urljoin(page_url, str(meta_image["content"]))
+        )
         if _is_petango_photo(image_url):
             images.add(image_url)
 
@@ -356,9 +364,8 @@ def _fetch_live_links() -> set[str]:
         )
 
     if iframe_missing_pages:
-        message = (
-            "Petango iframe not found on Wright-Way pages: "
-            + ", ".join(iframe_missing_pages)
+        message = "Petango iframe not found on Wright-Way pages: " + ", ".join(
+            iframe_missing_pages
         )
         if links:
             logger.warning(message)

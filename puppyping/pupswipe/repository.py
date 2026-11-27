@@ -34,8 +34,7 @@ def ensure_app_schema(conn) -> None:
     """Create or update tables/indexes needed by the PupSwipe app."""
     ensure_schema(conn)
     with conn.cursor() as cur:
-        cur.execute(
-            """
+        cur.execute("""
             DO $$
             BEGIN
                 IF to_regclass('public.pet_swipes') IS NULL
@@ -48,10 +47,8 @@ def ensure_app_schema(conn) -> None:
                 END IF;
             END
             $$;
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS pet_swipes (
                 id BIGSERIAL PRIMARY KEY,
                 pet_id INTEGER NOT NULL,
@@ -65,10 +62,8 @@ def ensure_app_schema(conn) -> None:
                 accept_language TEXT,
                 screen_info JSONB
             );
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id BIGSERIAL PRIMARY KEY,
                 email TEXT NOT NULL UNIQUE,
@@ -77,16 +72,12 @@ def ensure_app_schema(conn) -> None:
                 last_seen_at_utc TIMESTAMPTZ NOT NULL,
                 session_version INTEGER NOT NULL DEFAULT 1
             );
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             ALTER TABLE users
             ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 1;
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS pet_likes (
                 id BIGSERIAL PRIMARY KEY,
                 user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -96,10 +87,8 @@ def ensure_app_schema(conn) -> None:
                 created_at_utc TIMESTAMPTZ NOT NULL,
                 UNIQUE (user_id, pet_id, species)
             );
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS password_reset_tokens (
                 id BIGSERIAL PRIMARY KEY,
                 user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -108,40 +97,28 @@ def ensure_app_schema(conn) -> None:
                 expires_at_utc TIMESTAMPTZ NOT NULL,
                 used_at_utc TIMESTAMPTZ
             );
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             ALTER TABLE pet_swipes
             ADD COLUMN IF NOT EXISTS user_key TEXT;
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             ALTER TABLE pet_swipes
             ADD COLUMN IF NOT EXISTS species TEXT NOT NULL DEFAULT 'dog';
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             ALTER TABLE pet_swipes
             ADD COLUMN IF NOT EXISTS pet_id INTEGER;
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             ALTER TABLE pet_likes
             ADD COLUMN IF NOT EXISTS species TEXT NOT NULL DEFAULT 'dog';
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             ALTER TABLE pet_likes
             ADD COLUMN IF NOT EXISTS pet_id INTEGER;
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             DO $$
             BEGIN
                 IF EXISTS (
@@ -168,52 +145,36 @@ def ensure_app_schema(conn) -> None:
                 END IF;
             END
             $$;
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             ALTER TABLE pet_swipes
             ALTER COLUMN pet_id SET NOT NULL;
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             ALTER TABLE pet_likes
             ALTER COLUMN pet_id SET NOT NULL;
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             ALTER TABLE pet_likes
             DROP CONSTRAINT IF EXISTS dog_likes_user_id_dog_id_key;
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             ALTER TABLE pet_likes
             DROP CONSTRAINT IF EXISTS pet_likes_user_id_dog_id_key;
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             ALTER TABLE pet_likes
             DROP CONSTRAINT IF EXISTS pet_likes_user_id_pet_id_key;
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             ALTER TABLE pet_likes
             DROP CONSTRAINT IF EXISTS dog_likes_user_id_dog_id_species_key;
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             ALTER TABLE pet_likes
             DROP CONSTRAINT IF EXISTS pet_likes_user_id_dog_id_species_key;
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             DO $$
             BEGIN
                 IF NOT EXISTS (
@@ -228,58 +189,40 @@ def ensure_app_schema(conn) -> None:
                 END IF;
             END
             $$;
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             ALTER TABLE pet_swipes
             DROP COLUMN IF EXISTS dog_id;
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             ALTER TABLE pet_likes
             DROP COLUMN IF EXISTS dog_id;
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             ALTER TABLE users
             ADD COLUMN IF NOT EXISTS password_hash TEXT;
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             ALTER TABLE pet_swipes
             ADD COLUMN IF NOT EXISTS user_ip TEXT;
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             ALTER TABLE pet_swipes
             ADD COLUMN IF NOT EXISTS user_agent TEXT;
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             ALTER TABLE pet_swipes
             ADD COLUMN IF NOT EXISTS accept_language TEXT;
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             ALTER TABLE pet_swipes
             ADD COLUMN IF NOT EXISTS screen_info JSONB;
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             ALTER TABLE pet_swipes
             ADD COLUMN IF NOT EXISTS user_id BIGINT;
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             DO $$
             BEGIN
                 IF NOT EXISTS (
@@ -298,68 +241,47 @@ def ensure_app_schema(conn) -> None:
                 END IF;
             END
             $$;
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_pet_swipes_created_at
             ON pet_swipes (created_at_utc DESC);
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_pet_swipes_pet_id
             ON pet_swipes (pet_id);
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_pet_swipes_species
             ON pet_swipes (species);
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_pet_swipes_user_key
             ON pet_swipes (user_key);
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_pet_swipes_user_id
             ON pet_swipes (user_id);
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_pet_likes_user_created
             ON pet_likes (user_id, created_at_utc DESC);
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_pet_likes_pet_id
             ON pet_likes (pet_id);
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_pet_likes_species
             ON pet_likes (species);
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user
             ON password_reset_tokens (user_id, created_at_utc DESC);
-            """
-        )
-        cur.execute(
-            """
+            """)
+        cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires
             ON password_reset_tokens (expires_at_utc DESC);
-            """
-        )
+            """)
     conn.commit()
 
 
@@ -429,9 +351,7 @@ def _normalize_max_age_months(value, default: float = MAX_PUPPY_AGE_MONTHS) -> f
 
 
 def _text_like_pattern(value: str) -> str:
-    escaped = (
-        value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    )
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{escaped}%"
 
 
@@ -480,7 +400,9 @@ def fetch_puppies(
     normalized_species = _normalize_species_filter(species_filter)
     normalized_max_age_months = _normalize_max_age_months(max_age_months)
     normalized_pinned_profile_url = " ".join((pinned_profile_url or "").split()).strip()
-    normalized_excluded_profile_url = " ".join((excluded_profile_url or "").split()).strip()
+    normalized_excluded_profile_url = " ".join(
+        (excluded_profile_url or "").split()
+    ).strip()
     normalized_user_id, normalized_user_key = _normalize_viewer_context(
         viewer_user_id=viewer_user_id,
         viewer_user_key=viewer_user_key,
@@ -983,7 +905,9 @@ def store_swipe(
     with connection_factory() as conn:
         _ensure_bootstrapped(conn, ensure_schema_fn)
         with conn.cursor() as cur:
-            screen_info_json = json.dumps(screen_info, sort_keys=True) if screen_info else None
+            screen_info_json = (
+                json.dumps(screen_info, sort_keys=True) if screen_info else None
+            )
             cur.execute(
                 """
                 INSERT INTO pet_swipes (
@@ -1146,7 +1070,11 @@ def consume_password_reset_token(
             if not row:
                 raise ValueError("Reset link is invalid or expired.")
             token_id, user_id, expires_at_utc, used_at_utc = row
-            if used_at_utc is not None or expires_at_utc is None or expires_at_utc <= now:
+            if (
+                used_at_utc is not None
+                or expires_at_utc is None
+                or expires_at_utc <= now
+            ):
                 raise ValueError("Reset link is invalid or expired.")
 
             cur.execute(
@@ -1237,7 +1165,9 @@ def upsert_user(
             )
             row = cur.fetchone()
             if row:
-                columns = [col.name for col in cur.description] if cur.description else []
+                columns = (
+                    [col.name for col in cur.description] if cur.description else []
+                )
             else:
                 cur.execute(
                     """
@@ -1287,7 +1217,7 @@ def get_user_by_id(
     *,
     connection_factory: Callable = get_connection,
     ensure_schema_fn: Callable | None = ensure_app_schema,
- ) -> dict | None:
+) -> dict | None:
     """Load a user row by id without mutating session state."""
     with connection_factory() as conn:
         _ensure_bootstrapped(conn, ensure_schema_fn)

@@ -40,9 +40,7 @@ EMBED_CONFIG_RE = re.compile(
     flags=re.IGNORECASE | re.DOTALL,
 )
 NUMERIC_SUFFIX_RE = re.compile(r"(\d+)$")
-SOURCE_DOMAIN_RE = re.compile(
-    r"https?://[^\"' ]*shelterluv\.com", flags=re.IGNORECASE
-)
+SOURCE_DOMAIN_RE = re.compile(r"https?://[^\"' ]*shelterluv\.com", flags=re.IGNORECASE)
 
 cache = Cache("./data/cache/anti_cruelty")
 
@@ -83,7 +81,9 @@ def _parse_filters(raw_filters: str) -> dict[str, Any]:
     return {str(k): v for k, v in parsed.items()}
 
 
-def _extract_embed_configs(soup: BeautifulSoup) -> list[tuple[str, int, dict[str, Any]]]:
+def _extract_embed_configs(
+    soup: BeautifulSoup,
+) -> list[tuple[str, int, dict[str, Any]]]:
     """Extract unique Shelterluv embed configs from the anti-cruelty page."""
     configs: list[tuple[str, int, dict[str, Any]]] = []
     seen: set[tuple[str, int, tuple[tuple[str, str], ...]]] = set()
@@ -271,9 +271,7 @@ def _age_months_from_age_group(age_group: Any) -> float | None:
     to_months = _unit_to_months(age_group.get("age_to"), age_group.get("to_unit"))
     if to_months and to_months > 0:
         return round(to_months, 2)
-    from_months = _unit_to_months(
-        age_group.get("age_from"), age_group.get("from_unit")
-    )
+    from_months = _unit_to_months(age_group.get("age_from"), age_group.get("from_unit"))
     if from_months and from_months > 0:
         return round(from_months, 2)
     return None
@@ -329,11 +327,13 @@ def _iter_media_items(raw_media: Any) -> Iterable[dict[str, Any]]:
         ordered_keys = sorted(
             raw_media,
             key=lambda value: (
-                0,
-                int(str(value)),
-            )
-            if str(value).isdigit()
-            else (1, str(value)),
+                (
+                    0,
+                    int(str(value)),
+                )
+                if str(value).isdigit()
+                else (1, str(value))
+            ),
         )
         return [
             raw_media[key]
@@ -402,8 +402,7 @@ def fetch_pet_profile_anti_cruelty(url: str) -> PetProfile:
         age_raw=age_raw,
         age_months=age_months,
         weight_lbs=_parse_weight_lbs(
-            str(animal.get("weight") or "")
-            or str(animal.get("weight_group") or "")
+            str(animal.get("weight") or "") or str(animal.get("weight_group") or "")
         ),
         location=_clean(str(animal.get("location") or "")) or None,
         status="Available" if bool(animal.get("adoptable", True)) else "Unavailable",

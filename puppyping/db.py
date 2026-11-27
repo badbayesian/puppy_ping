@@ -503,13 +503,11 @@ def get_email_subscribers(logger: Logger | None = None) -> list[str]:
     with get_connection() as conn:
         ensure_schema(conn)
         with conn.cursor() as cur:
-            cur.execute(
-                """
+            cur.execute("""
                 SELECT email
                 FROM email_subscribers
                 ORDER BY created_at_utc ASC;
-                """
-            )
+                """)
             rows = cur.fetchall()
     emails = sanitize_emails(str(row[0]) for row in rows if row and row[0])
     if logger:
@@ -696,12 +694,15 @@ def store_pet_status(
         ensure_schema(conn)
         fetched_at = datetime.now(timezone.utc)
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 UPDATE pet_status
                 SET is_active = false
                 WHERE is_active = true
                   AND source = %s;
-                """, (source,))
+                """,
+                (source,),
+            )
             if unique_links:
                 cur.executemany(
                     """
@@ -735,9 +736,7 @@ def store_pet_status(
         conn.commit()
     if logger:
         if unique_links:
-            logger.info(
-                f"Stored {len(unique_links)} active pet links for {source}."
-            )
+            logger.info(f"Stored {len(unique_links)} active pet links for {source}.")
         else:
             logger.info(f"Marked pet links inactive for {source} (empty batch).")
 
@@ -748,6 +747,7 @@ def store_dog_status(
     """Backward-compatible alias for store_pet_status."""
     store_pet_status(source=source, links=links, logger=logger)
 
+
 def get_cached_links(
     source: str, max_age_seconds: int, logger: Logger | None = None
 ) -> list[str] | None:
@@ -755,12 +755,15 @@ def get_cached_links(
     with get_connection() as conn:
         ensure_schema(conn)
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT max(fetched_at_utc)
                 FROM cached_links
                 WHERE is_active = true
                   AND source = %s;
-                """, (source,))
+                """,
+                (source,),
+            )
             row = cur.fetchone()
             if not row or row[0] is None:
                 if logger:
@@ -774,13 +777,16 @@ def get_cached_links(
                         f"Cached links for {source} are stale (age {age_seconds:.0f}s)."
                     )
                 return None
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT link
                 FROM cached_links
                 WHERE is_active = true
                   AND source = %s
                 ORDER BY link;
-                """, (source,))
+                """,
+                (source,),
+            )
             links = [row[0] for row in cur.fetchall()]
             if logger:
                 logger.info(
@@ -798,12 +804,15 @@ def store_cached_links(
         ensure_schema(conn)
         fetched_at = datetime.now(timezone.utc)
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 UPDATE cached_links
                 SET is_active = false
                 WHERE is_active = true
                   AND source = %s;
-                """, (source,))
+                """,
+                (source,),
+            )
             if unique_links:
                 cur.executemany(
                     """

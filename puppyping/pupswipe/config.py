@@ -49,15 +49,11 @@ def get_public_base_url() -> str:
     """Return the configured public PupSwipe base URL or raise."""
     raw = os.environ.get("PUPSWIPE_PUBLIC_URL", "").strip()
     if not raw:
-        raise ValueError(
-            "PUPSWIPE_PUBLIC_URL must be set before starting PupSwipe."
-        )
+        raise ValueError("PUPSWIPE_PUBLIC_URL must be set before starting PupSwipe.")
 
     parsed = urlparse(raw)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError(
-            "PUPSWIPE_PUBLIC_URL must be an absolute http(s) URL."
-        )
+        raise ValueError("PUPSWIPE_PUBLIC_URL must be an absolute http(s) URL.")
     if parsed.params or parsed.query or parsed.fragment:
         raise ValueError(
             "PUPSWIPE_PUBLIC_URL must not include params, query, or fragment."
